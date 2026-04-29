@@ -1,10 +1,429 @@
 <!DOCTYPE html>
-<html>
+<html lang="uk">
 <head>
-  <meta charset="UTF-8">
-  <title>Beauty WebApp</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Брови | Ламінування вій</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <style>
+    :root {
+      --bg: #070609;
+      --card: rgba(22, 20, 24, .88);
+      --card2: rgba(36, 30, 38, .9);
+      --pink: #ff7ab6;
+      --pink2: #d84f8e;
+      --soft: #ffd7e8;
+      --text: #fff;
+      --muted: #b8adb5;
+      --line: rgba(255,255,255,.10);
+      --gold: #ffd36b;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+    body {
+      background:
+        radial-gradient(circle at top left, rgba(255,122,182,.26), transparent 32%),
+        radial-gradient(circle at bottom right, rgba(216,79,142,.16), transparent 35%),
+        linear-gradient(180deg, #111015, #050506 75%);
+      padding-bottom: 92px;
+    }
+
+    .app { max-width: 520px; margin: 0 auto; min-height: 100vh; }
+
+    .top {
+      position: sticky; top: 0; z-index: 50;
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px 14px;
+      background: rgba(7,6,9,.78);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--line);
+    }
+    .back {
+      width: 38px; height: 38px; border: 0; border-radius: 50%;
+      display: none; place-items: center;
+      background: rgba(255,255,255,.08); color: var(--pink);
+      font-size: 22px; cursor: pointer;
+    }
+    .logo {
+      width: 42px; height: 42px; border-radius: 50%;
+      background: linear-gradient(135deg, #ff95c8, #b53073);
+      display: grid; place-items: center;
+      font-weight: 900; font-family: Georgia, serif;
+      box-shadow: 0 0 0 3px rgba(255,122,182,.12);
+    }
+    .title { flex: 1; text-align: center; line-height: 1.15; }
+    .title b { display: block; font-size: 15px; }
+    .title span { color: var(--muted); font-size: 12px; }
+    .dots { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,.08); display: grid; place-items: center; color: var(--soft); }
+
+    .page { display: none; padding: 14px; animation: fade .18s ease; }
+    .page.active { display: block; }
+    @keyframes fade { from { opacity: .3; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    .hero {
+      min-height: 210px; border-radius: 28px; overflow: hidden;
+      background-size: cover; background-position: center;
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 50px rgba(0,0,0,.35);
+      position: relative; padding: 22px; display: flex; flex-direction: column; justify-content: flex-end;
+    }
+    .hero::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, transparent 10%, rgba(0,0,0,.80)); }
+    .hero > * { position: relative; z-index: 1; }
+    .hero h1 { margin: 0; font-family: Georgia, serif; letter-spacing: 1px; font-size: 28px; }
+    .hero p { margin: 8px 0 0; color: var(--soft); font-size: 15px; line-height: 1.35; }
+
+    .home-hero { background-image: url('https://images.unsplash.com/photo-1516975080664-ed2fc6a32937?auto=format&fit=crop&w=1000&q=80'); }
+    .book-hero { background-image: url('https://images.unsplash.com/photo-1487412947147-5cebf100ffc2?auto=format&fit=crop&w=1000&q=80'); }
+    .vip-hero { background-image: url('https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?auto=format&fit=crop&w=1000&q=80'); }
+    .gift-hero { background-image: url('https://images.unsplash.com/photo-1513201099705-a9746e1e201f?auto=format&fit=crop&w=1000&q=80'); }
+    .portfolio-hero { background-image: url('https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?auto=format&fit=crop&w=1000&q=80'); }
+    .reviews-hero { background-image: url('https://images.unsplash.com/photo-1515377905703-c4788e51af15?auto=format&fit=crop&w=1000&q=80'); }
+    .course-hero { background-image: url('https://images.unsplash.com/photo-1512496015851-a90fb38ba796?auto=format&fit=crop&w=1000&q=80'); }
+    .contact-hero { background-image: url('https://images.unsplash.com/photo-1562322140-8baeececf3df?auto=format&fit=crop&w=1000&q=80'); }
+    .price-hero { background-image: url('https://images.unsplash.com/photo-1596462502278-27bfdc403348?auto=format&fit=crop&w=1000&q=80'); }
+
+    .bubble, .card, .service, .review, .notice {
+      background: var(--card);
+      border: 1px solid var(--line);
+      box-shadow: 0 14px 34px rgba(0,0,0,.24);
+      border-radius: 24px;
+    }
+    .bubble { margin-top: 14px; padding: 18px; line-height: 1.48; color: #f7edf3; }
+    .bubble b { color: #fff; }
+
+    .section-title {
+      text-align: center; margin: 18px 0 12px;
+      color: var(--pink); font-weight: 900; font-size: 12px; letter-spacing: 2.4px;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .card {
+      min-height: 132px; padding: 16px; cursor: pointer; position: relative; overflow: hidden;
+      transition: transform .12s ease, border-color .12s ease;
+    }
+    .card:active { transform: scale(.98); border-color: rgba(255,122,182,.55); }
+    .icon {
+      width: 48px; height: 48px; border-radius: 18px;
+      display: grid; place-items: center; font-size: 25px; margin-bottom: 12px;
+      background: rgba(255,122,182,.14); color: var(--pink);
+      border: 1px solid rgba(255,122,182,.18);
+    }
+    .card b { display: block; font-size: 17px; }
+    .card span { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.25; }
+    .wide { grid-column: 1 / -1; min-height: 98px; }
+    .badge {
+      position: absolute; right: 12px; bottom: 12px;
+      background: linear-gradient(135deg, var(--pink), var(--pink2));
+      border-radius: 999px; padding: 5px 10px; font-weight: 900; font-size: 13px;
+    }
+
+    .service {
+      margin-bottom: 10px; padding: 14px 15px;
+      display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+    }
+    .service b { display: block; font-size: 15px; line-height: 1.25; }
+    .service small { color: var(--muted); display: block; margin-top: 4px; }
+    .service strong { color: var(--soft); font-size: 15px; white-space: nowrap; }
+
+    .btn {
+      width: 100%; border: 0; border-radius: 20px; padding: 16px 18px; margin-top: 12px;
+      font-weight: 900; color: white; font-size: 16px; cursor: pointer;
+      background: linear-gradient(135deg, var(--pink), var(--pink2));
+      box-shadow: 0 12px 30px rgba(216,79,142,.28);
+    }
+    .btn.secondary { background: rgba(255,255,255,.08); box-shadow: none; border: 1px solid var(--line); color: var(--soft); }
+    .btn.gold { background: linear-gradient(135deg, #ffd36b, #b67816); color: #241005; }
+
+    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
+    .tab {
+      border: 1px solid var(--line); border-radius: 16px; padding: 12px; text-align: center;
+      background: rgba(255,255,255,.06); color: var(--muted); font-weight: 800;
+    }
+    .tab.active { background: rgba(255,122,182,.15); color: var(--soft); border-color: rgba(255,122,182,.35); }
+
+    .notice { padding: 16px; margin: 12px 0; color: #f6edf2; line-height: 1.45; }
+    .notice.pink { border-color: rgba(255,122,182,.35); background: rgba(255,122,182,.10); }
+    .notice.gold { border-color: rgba(255,211,107,.35); background: rgba(255,211,107,.10); }
+
+    .review { padding: 16px; margin-bottom: 10px; color: #f8eef4; line-height: 1.45; }
+    .review .stars { color: var(--gold); margin-bottom: 8px; }
+
+    .gift-card {
+      margin: 14px 0; height: 220px; border-radius: 26px; padding: 24px;
+      display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
+      background:
+        linear-gradient(135deg, rgba(255,226,236,.95), rgba(226,144,174,.95)),
+        url('https://images.unsplash.com/photo-1513201099705-a9746e1e201f?auto=format&fit=crop&w=1000&q=80');
+      background-size: cover; color: #4b1731; font-family: Georgia, serif;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,.45);
+    }
+    .gift-card b { font-size: 28px; letter-spacing: 1px; }
+    .gift-card span { margin-top: 10px; }
+
+    .bottom {
+      position: fixed; left: 0; right: 0; bottom: 0; z-index: 80;
+      max-width: 520px; margin: 0 auto;
+      display: grid; grid-template-columns: repeat(5, 1fr);
+      padding: 9px 8px 17px;
+      background: rgba(6,6,8,.86);
+      backdrop-filter: blur(22px);
+      border-top: 1px solid var(--line);
+    }
+    .nav {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+      color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 16px; padding: 6px 2px;
+    }
+    .nav .nicon { font-size: 23px; line-height: 1; }
+    .nav.active { color: var(--pink); background: rgba(255,122,182,.08); }
+    .sparkle {
+      transform: translateY(-14px); width: 62px; height: 62px; border-radius: 50%;
+      display: grid; place-items: center; font-size: 28px; color: white;
+      background: linear-gradient(135deg, var(--pink), var(--pink2));
+      box-shadow: 0 16px 40px rgba(255,122,182,.35);
+    }
+
+    .mini-list { margin: 0; padding-left: 18px; color: #f5e8ef; line-height: 1.6; }
+    .divider { height: 1px; background: var(--line); margin: 14px 0; }
+    .small { color: var(--muted); font-size: 13px; line-height: 1.4; }
+  </style>
 </head>
+
 <body>
-  <h1>WebApp работает 🚀</h1>
+  <div class="app">
+    <div class="top">
+      <button id="backBtn" class="back" onclick="goBack()">‹</button>
+      <div class="logo">B</div>
+      <div class="title">
+        <b>Брови | Ламінування вій</b>
+        <span>beauty webapp</span>
+      </div>
+      <div class="dots">•••</div>
+    </div>
+
+    <!-- HOME -->
+    <section id="home" class="page active">
+      <div class="hero home-hero">
+        <h1>БРОВИ | ЛАМІ</h1>
+        <p>Твоя краса — моя робота 💖</p>
+      </div>
+
+      <div class="bubble">
+        <b>Привіт, красуне 💕</b><br>
+        Я твій особистий помічник для запису на брови та ламінування вій ✨<br>
+        Обирай потрібний розділ нижче.
+      </div>
+
+      <div class="section-title">ГОЛОВНЕ МЕНЮ</div>
+
+      <div class="grid">
+        <div class="card" onclick="openPage('book')"><div class="icon">📅</div><b>Записатися</b><span>Обрати послугу та час</span></div>
+        <div class="card" onclick="openPage('my')"><div class="icon">🗓</div><b>Мій запис</b><span>Переглянути або скасувати</span></div>
+        <div class="card" onclick="openPage('vip')"><div class="icon">💎</div><b>VIP запис</b><span>Ранок та вечір</span></div>
+        <div class="card" onclick="openPage('gift')"><div class="icon">🎁</div><b>Сертифікат</b><span>Подаруй красу</span><div class="badge">-10%</div></div>
+        <div class="card" onclick="openPage('portfolio')"><div class="icon">🖼️</div><b>Портфоліо</b><span>Роботи майстра</span></div>
+        <div class="card" onclick="openPage('reviews')"><div class="icon">⭐</div><b>Відгуки</b><span>Думки клієнтів</span></div>
+        <div class="card" onclick="openPage('price')"><div class="icon">💰</div><b>Прайс</b><span>Ціни та тривалість</span></div>
+        <div class="card" onclick="openPage('course')"><div class="icon">🎓</div><b>Навчання</b><span>Brow Master Start</span></div>
+        <div class="card wide" onclick="openPage('contact')"><div class="icon">💌</div><b>Звʼязатися з майстром</b><span>Telegram та Instagram</span></div>
+      </div>
+    </section>
+
+    <!-- BOOK -->
+    <section id="book" class="page">
+      <div class="hero book-hero"><h1>Запис на процедуру</h1><p>Обери послугу, а далі бот допоможе вибрати дату, час і відправити чек.</p></div>
+      <div class="bubble">
+        <b>Як проходить запис:</b><br>
+        1️⃣ Вводиш імʼя<br>
+        2️⃣ Обираєш послугу<br>
+        3️⃣ Обираєш дату та час<br>
+        4️⃣ Надсилаєш чек передоплати<br><br>
+        Після цього заявка потрапляє майстру.
+      </div>
+      <button class="btn" onclick="sendToBot('book')">🌸 Почати запис у боті</button>
+      <button class="btn secondary" onclick="openPage('price')">💰 Спочатку подивитися прайс</button>
+    </section>
+
+    <!-- MY BOOKING -->
+    <section id="my" class="page">
+      <div class="hero book-hero"><h1>Мій запис</h1><p>Перегляд актуального запису та можливість скасування.</p></div>
+      <div class="notice pink">
+        Усі активні записи зберігаються в боті. Натисни кнопку нижче — бот покаже твій запис, статус оплати та кнопку скасування.
+      </div>
+      <button class="btn" onclick="sendToBot('my_booking')">🗓 Показати мій запис</button>
+    </section>
+
+    <!-- VIP -->
+    <section id="vip" class="page">
+      <div class="hero vip-hero"><h1>VIP запис 💎</h1><p>Для тих, хто цінує гнучкість, комфорт та пріоритет.</p></div>
+      <div class="notice gold">
+        <b>VIP відкриває додаткові години:</b><br>
+        🌅 07:00, 07:30, 08:00, 08:30, 09:00<br>
+        🌙 19:00, 19:30, 20:00
+      </div>
+      <div class="bubble">
+        🔥 Пріоритет у підтвердженні<br>
+        ⚠️ Кількість VIP-місць на день обмежена<br>
+        💎 Обрати VIP можна під час оформлення запису
+      </div>
+      <button class="btn gold" onclick="sendToBot('vip')">💎 Перейти до VIP</button>
+      <button class="btn secondary" onclick="sendToBot('book')">🌸 Записатися</button>
+    </section>
+
+    <!-- GIFT -->
+    <section id="gift" class="page">
+      <div class="hero gift-hero"><h1>Подарунковий сертифікат</h1><p>Красивий подарунок для близької людини 🎁</p></div>
+      <div class="gift-card"><b>ПОДАРУНКОВИЙ<br>СЕРТИФІКАТ</b><span>для тебе ♥</span></div>
+      <div class="notice pink">
+        ✨ Будь-яка сума на ваш вибір<br>
+        ✨ Діє на всі послуги<br>
+        ✨ Термін дії — 6 місяців<br>
+        ✨ Оформлення за 5 хвилин
+      </div>
+      <div class="notice gold">
+        <b>СПЕЦІАЛЬНА ЗНИЖКА -10%</b><br>
+        Купуй сертифікат зараз та отримай знижку 10% на процедуру для отримувача 🔥
+      </div>
+      <button class="btn" onclick="sendToBot('gift')">🎁 Хочу сертифікат</button>
+      <button class="btn secondary" onclick="sendToBot('contact')">💌 Звʼязатися з майстром</button>
+    </section>
+
+    <!-- PRICE -->
+    <section id="price" class="page">
+      <div class="hero price-hero"><h1>PRICE LIST</h1><p>Найкращий час для краси ✨</p></div>
+
+      <div class="section-title">ОФОРМЛЕННЯ БРІВ</div>
+      <div class="service"><div><b>🤎 Корекція брів</b><small>віск + пінцет • 30 хв</small></div><strong>300 грн</strong></div>
+      <div class="service"><div><b>🎨 Фарбування брів</b><small>30 хв</small></div><strong>300 грн</strong></div>
+      <div class="service"><div><b>🧔 Чоловіча корекція</b><small>віск • 30 хв</small></div><strong>350 грн</strong></div>
+      <div class="service"><div><b>🤎 Корекція + фарбування</b><small>45 хв</small></div><strong>450 грн</strong></div>
+
+      <div class="section-title">ЛАМІНУВАННЯ БРІВ</div>
+      <div class="service"><div><b>✨ Ламінування брів + корекція</b><small>40 хв</small></div><strong>550 грн</strong></div>
+      <div class="service"><div><b>💎 Ламінування + фарбування + корекція + ботокс</b><small>1 год</small></div><strong>700 грн</strong></div>
+
+      <div class="section-title">ЛАМІНУВАННЯ ВІЙ</div>
+      <div class="service"><div><b>👁 Ламінування вій + фарбування + ботокс</b><small>1 год</small></div><strong>700 грн</strong></div>
+      <div class="service"><div><b>🎨 Окремо фарбування вій</b><small>15 хв</small></div><strong>150 грн</strong></div>
+
+      <div class="section-title">КОМПЛЕКС</div>
+      <div class="service"><div><b>🔥 Ламі брів + ламі вій</b><small>з фарбуванням, корекцією та ботоксом • 1,5 год</small></div><strong>1450 грн</strong></div>
+
+      <button class="btn" onclick="sendToBot('book')">🌸 Записатися</button>
+    </section>
+
+    <!-- PORTFOLIO -->
+    <section id="portfolio" class="page">
+      <div class="hero portfolio-hero"><h1>Портфоліо</h1><p>Результати, які виглядають дорого, доглянуто та натурально.</p></div>
+      <div class="bubble">
+        У боті майстер може додавати реальні фото робіт. Натисни кнопку нижче, щоб переглянути актуальне портфоліо.
+      </div>
+      <button class="btn" onclick="sendToBot('portfolio')">📸 Відкрити портфоліо в боті</button>
+      <button class="btn secondary" onclick="sendToBot('book')">💖 Хочу такий результат</button>
+    </section>
+
+    <!-- REVIEWS -->
+    <section id="reviews" class="page">
+      <div class="hero reviews-hero"><h1>Відгуки клієнтів</h1><p>Довіра починається з реальних емоцій ⭐</p></div>
+      <div class="review"><div class="stars">★★★★★</div>«Дуже задоволена результатом, брови виглядають акуратно й натурально!»</div>
+      <div class="review"><div class="stars">★★★★★</div>«Майстер дуже уважна до деталей, усе комфортно і красиво.»</div>
+      <div class="review"><div class="stars">★★★★★</div>«Після ламінування погляд став набагато виразнішим. Рекомендую!»</div>
+      <button class="btn" onclick="sendToBot('reviews')">⭐ Дивитися реальні відгуки</button>
+      <button class="btn secondary" onclick="sendToBot('leave_review')">💬 Залишити відгук</button>
+    </section>
+
+    <!-- COURSE -->
+    <section id="course" class="page">
+      <div class="hero course-hero"><h1>Brow Master Start</h1><p>Навчання для тих, хто хоче стартувати у beauty-сфері.</p></div>
+      <div class="bubble">
+        <b>На курсі ви навчитеся:</b>
+        <ul class="mini-list">
+          <li>підбирати форму брів</li>
+          <li>працювати з фарбуванням</li>
+          <li>робити ламінування</li>
+          <li>спілкуватися з клієнтами</li>
+          <li>стартувати як майстер</li>
+        </ul>
+        <div class="divider"></div>
+        <b>Вартість:</b> 6000 грн
+      </div>
+      <button class="btn" onclick="sendToBot('course')">🎓 Хочу на курс</button>
+    </section>
+
+    <!-- CONTACT -->
+    <section id="contact" class="page">
+      <div class="hero contact-hero"><h1>Контакти</h1><p>Звʼяжіться з майстром для уточнення деталей.</p></div>
+      <div class="bubble">
+        <b>Telegram:</b> @k_dmt<br>
+        <b>Instagram:</b> @karolina_baldich<br><br>
+        Якщо потрібна нестандартна дата або час — залиште запит у боті.
+      </div>
+      <button class="btn" onclick="sendToBot('contact')">💌 Написати майстру</button>
+      <button class="btn secondary" onclick="sendToBot('planned')">📝 Запланований запис</button>
+    </section>
+
+    <nav class="bottom">
+      <div class="nav active" onclick="openPage('home')" data-nav="home"><div class="nicon">🏠</div>Головна</div>
+      <div class="nav" onclick="openPage('book')" data-nav="book"><div class="nicon">📅</div>Запис</div>
+      <div class="nav" onclick="openPage('price')" data-nav="price"><div class="sparkle">✨</div></div>
+      <div class="nav" onclick="openPage('reviews')" data-nav="reviews"><div class="nicon">💬</div>Відгуки</div>
+      <div class="nav" onclick="openPage('contact')" data-nav="contact"><div class="nicon">👤</div>Контакт</div>
+    </nav>
+  </div>
+
+<script>
+  const tg = window.Telegram?.WebApp;
+  const historyStack = ["home"];
+
+  if (tg) {
+    tg.expand();
+    tg.ready();
+    tg.setHeaderColor("#070609");
+    tg.setBackgroundColor("#070609");
+  }
+
+  function setActiveNav(id) {
+    document.querySelectorAll(".nav").forEach(n => n.classList.remove("active"));
+    const nav = document.querySelector(`[data-nav="${id}"]`);
+    if (nav) nav.classList.add("active");
+  }
+
+  function openPage(id, push = true) {
+    document.querySelectorAll(".page").forEach(p => p.classList.remove("active"));
+    document.getElementById(id).classList.add("active");
+
+    if (push && historyStack[historyStack.length - 1] !== id) {
+      historyStack.push(id);
+    }
+
+    document.getElementById("backBtn").style.display = id === "home" ? "none" : "grid";
+    setActiveNav(id);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function goBack() {
+    if (historyStack.length > 1) {
+      historyStack.pop();
+      openPage(historyStack[historyStack.length - 1], false);
+    } else {
+      openPage("home", false);
+    }
+  }
+
+  function sendToBot(action) {
+    const map = {
+      my_booking: "my_booking",
+      leave_review: "leave_review",
+      planned: "planned",
+    };
+    const data = map[action] || action;
+
+    if (tg) {
+      tg.sendData(data);
+      tg.close();
+    } else {
+      alert("Дія для бота: " + data);
+    }
+  }
+</script>
 </body>
 </html>
