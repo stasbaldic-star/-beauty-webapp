@@ -9,7 +9,6 @@
     :root {
       --bg: #070609;
       --card: rgba(22, 20, 24, .88);
-      --card2: rgba(36, 30, 38, .9);
       --pink: #ff7ab6;
       --pink2: #d84f8e;
       --soft: #ffd7e8;
@@ -20,7 +19,15 @@
     }
 
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-    html, body { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }
+
+    html, body {
+      margin: 0;
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+    }
+
     body {
       background:
         radial-gradient(circle at top left, rgba(255,122,182,.26), transparent 32%),
@@ -29,59 +36,120 @@
       padding-bottom: 92px;
     }
 
-    .app { max-width: 520px; margin: 0 auto; min-height: 100vh; }
+    .app {
+      max-width: 520px;
+      margin: 0 auto;
+      min-height: 100vh;
+    }
 
     .top {
-      position: sticky; top: 0; z-index: 50;
-      display: flex; align-items: center; gap: 12px;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      display: flex;
+      align-items: center;
+      gap: 12px;
       padding: 12px 14px;
       background: rgba(7,6,9,.78);
       backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--line);
     }
-    .back {
-      width: 38px; height: 38px; border: 0; border-radius: 50%;
-      display: none; place-items: center;
-      background: rgba(255,255,255,.08); color: var(--pink);
-      font-size: 22px; cursor: pointer;
-    }
-    .logo {
-      width: 42px; height: 42px; border-radius: 50%;
-      background: linear-gradient(135deg, #ff95c8, #b53073);
-      display: grid; place-items: center;
-      font-weight: 900; font-family: Georgia, serif;
-      box-shadow: 0 0 0 3px rgba(255,122,182,.12);
-    }
-    .title { flex: 1; text-align: center; line-height: 1.15; }
-    .title b { display: block; font-size: 15px; }
-    .title span { color: var(--muted); font-size: 12px; }
-    .dots { width: 38px; height: 38px; border-radius: 50%; background: rgba(255,255,255,.08); display: grid; place-items: center; color: var(--soft); }
 
-    .page { display: none; padding: 14px; animation: fade .18s ease; }
-    .page.active { display: block; }
-    @keyframes fade { from { opacity: .3; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+    .back {
+      width: 38px;
+      height: 38px;
+      border: 0;
+      border-radius: 50%;
+      display: none;
+      place-items: center;
+      background: rgba(255,255,255,.08);
+      color: var(--pink);
+      font-size: 22px;
+      cursor: pointer;
+    }
+
+    .logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      background-image: url('hero.jpg');
+      background-size: cover;
+      background-position: center;
+      box-shadow: 0 0 0 3px rgba(255,122,182,.25);
+      flex-shrink: 0;
+    }
+
+    .title {
+      flex: 1;
+      text-align: center;
+      line-height: 1.15;
+    }
+
+    .title b {
+      display: block;
+      font-size: 15px;
+    }
+
+    .title span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dots {
+      width: 38px;
+      height: 38px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.08);
+      display: grid;
+      place-items: center;
+      color: var(--soft);
+    }
+
+    .page {
+      display: none;
+      padding: 14px;
+      animation: fade .18s ease;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    @keyframes fade {
+      from { opacity: .3; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
 
     .hero {
-      min-height: 210px; border-radius: 28px; overflow: hidden;
-      background-size: cover; background-position: center;
+      min-height: 210px;
+      border-radius: 28px;
+      overflow: hidden;
       border: 1px solid var(--line);
       box-shadow: 0 18px 50px rgba(0,0,0,.35);
-      position: relative; padding: 22px; display: flex; flex-direction: column; justify-content: flex-end;
+      position: relative;
+      padding: 22px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      background:
+        radial-gradient(circle at top left, rgba(255,122,182,.34), transparent 34%),
+        radial-gradient(circle at bottom right, rgba(216,79,142,.28), transparent 38%),
+        linear-gradient(135deg, rgba(45,25,38,.96), rgba(8,7,10,.96));
     }
-    .hero::before { content: ""; position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,.08) 0%, rgba(0,0,0,.30) 45%, rgba(0,0,0,.86) 100%); }
-    .hero > * { position: relative; z-index: 1; }
-    .hero h1 { margin: 0; font-family: Georgia, serif; letter-spacing: 1px; font-size: 28px; }
-    .hero p { margin: 8px 0 0; color: var(--soft); font-size: 15px; line-height: 1.35; }
 
-    .home-hero { background-image: url('https://source.unsplash.com/1200x800/?eyebrows,eyelashes,beauty'); }
-    .book-hero { background-image: url('https://source.unsplash.com/1200x800/?eyelash,extension,beauty'); }
-    .vip-hero { background-image: url('https://source.unsplash.com/1200x800/?luxury,beauty,salon,makeup'); }
-    .gift-hero { background-image: url('https://source.unsplash.com/1200x800/?beauty,gift,cosmetics'); }
-    .portfolio-hero { background-image: url('https://source.unsplash.com/1200x800/?eyebrow,makeup,closeup'); }
-    .reviews-hero { background-image: url('https://source.unsplash.com/1200x800/?eyelash,eye,beauty'); }
-    .course-hero { background-image: url('https://source.unsplash.com/1200x800/?brow,makeup,academy'); }
-    .contact-hero { background-image: url('https://source.unsplash.com/1200x800/?beauty,salon,brows'); }
-    .price-hero { background-image: url('https://source.unsplash.com/1200x800/?eyebrow,cosmetics,makeup'); }
+    .hero h1 {
+      margin: 0;
+      font-family: Georgia, serif;
+      letter-spacing: 1px;
+      font-size: 28px;
+    }
+
+    .hero p {
+      margin: 8px 0 0;
+      color: var(--soft);
+      font-size: 15px;
+      line-height: 1.35;
+    }
 
     .bubble, .card, .service, .review, .notice {
       background: var(--card);
@@ -89,102 +157,259 @@
       box-shadow: 0 14px 34px rgba(0,0,0,.24);
       border-radius: 24px;
     }
-    .bubble { margin-top: 14px; padding: 18px; line-height: 1.48; color: #f7edf3; }
-    .bubble b { color: #fff; }
+
+    .bubble {
+      margin-top: 14px;
+      padding: 18px;
+      line-height: 1.48;
+      color: #f7edf3;
+    }
+
+    .bubble b {
+      color: #fff;
+    }
 
     .section-title {
-      text-align: center; margin: 18px 0 12px;
-      color: var(--pink); font-weight: 900; font-size: 12px; letter-spacing: 2.4px;
+      text-align: center;
+      margin: 18px 0 12px;
+      color: var(--pink);
+      font-weight: 900;
+      font-size: 12px;
+      letter-spacing: 2.4px;
     }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
     .card {
-      min-height: 132px; padding: 16px; cursor: pointer; position: relative; overflow: hidden;
+      min-height: 132px;
+      padding: 16px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
       transition: transform .12s ease, border-color .12s ease;
     }
-    .card:active { transform: scale(.98); border-color: rgba(255,122,182,.55); }
+
+    .card:active {
+      transform: scale(.98);
+      border-color: rgba(255,122,182,.55);
+    }
+
     .icon {
-      width: 48px; height: 48px; border-radius: 18px;
-      display: grid; place-items: center; font-size: 25px; margin-bottom: 12px;
-      background: rgba(255,122,182,.14); color: var(--pink);
+      width: 48px;
+      height: 48px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      font-size: 25px;
+      margin-bottom: 12px;
+      background: rgba(255,122,182,.14);
+      color: var(--pink);
       border: 1px solid rgba(255,122,182,.18);
     }
-    .card b { display: block; font-size: 17px; }
-    .card span { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.25; }
-    .wide { grid-column: 1 / -1; min-height: 98px; }
+
+    .card b {
+      display: block;
+      font-size: 17px;
+    }
+
+    .card span {
+      display: block;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.25;
+    }
+
+    .wide {
+      grid-column: 1 / -1;
+      min-height: 98px;
+    }
+
     .badge {
-      position: absolute; right: 12px; bottom: 12px;
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
       background: linear-gradient(135deg, var(--pink), var(--pink2));
-      border-radius: 999px; padding: 5px 10px; font-weight: 900; font-size: 13px;
+      border-radius: 999px;
+      padding: 5px 10px;
+      font-weight: 900;
+      font-size: 13px;
     }
 
     .service {
-      margin-bottom: 10px; padding: 14px 15px;
-      display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+      margin-bottom: 10px;
+      padding: 14px 15px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
     }
-    .service b { display: block; font-size: 15px; line-height: 1.25; }
-    .service small { color: var(--muted); display: block; margin-top: 4px; }
-    .service strong { color: var(--soft); font-size: 15px; white-space: nowrap; }
+
+    .service b {
+      display: block;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+
+    .service small {
+      color: var(--muted);
+      display: block;
+      margin-top: 4px;
+    }
+
+    .service strong {
+      color: var(--soft);
+      font-size: 15px;
+      white-space: nowrap;
+    }
 
     .btn {
-      width: 100%; border: 0; border-radius: 20px; padding: 16px 18px; margin-top: 12px;
-      font-weight: 900; color: white; font-size: 16px; cursor: pointer;
+      width: 100%;
+      border: 0;
+      border-radius: 20px;
+      padding: 16px 18px;
+      margin-top: 12px;
+      font-weight: 900;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
       background: linear-gradient(135deg, var(--pink), var(--pink2));
       box-shadow: 0 12px 30px rgba(216,79,142,.28);
     }
-    .btn.secondary { background: rgba(255,255,255,.08); box-shadow: none; border: 1px solid var(--line); color: var(--soft); }
-    .btn.gold { background: linear-gradient(135deg, #ffd36b, #b67816); color: #241005; }
 
-    .tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 12px 0; }
-    .tab {
-      border: 1px solid var(--line); border-radius: 16px; padding: 12px; text-align: center;
-      background: rgba(255,255,255,.06); color: var(--muted); font-weight: 800;
+    .btn.secondary {
+      background: rgba(255,255,255,.08);
+      box-shadow: none;
+      border: 1px solid var(--line);
+      color: var(--soft);
     }
-    .tab.active { background: rgba(255,122,182,.15); color: var(--soft); border-color: rgba(255,122,182,.35); }
 
-    .notice { padding: 16px; margin: 12px 0; color: #f6edf2; line-height: 1.45; }
-    .notice.pink { border-color: rgba(255,122,182,.35); background: rgba(255,122,182,.10); }
-    .notice.gold { border-color: rgba(255,211,107,.35); background: rgba(255,211,107,.10); }
+    .btn.gold {
+      background: linear-gradient(135deg, #ffd36b, #b67816);
+      color: #241005;
+    }
 
-    .review { padding: 16px; margin-bottom: 10px; color: #f8eef4; line-height: 1.45; }
-    .review .stars { color: var(--gold); margin-bottom: 8px; }
+    .notice {
+      padding: 16px;
+      margin: 12px 0;
+      color: #f6edf2;
+      line-height: 1.45;
+    }
+
+    .notice.pink {
+      border-color: rgba(255,122,182,.35);
+      background: rgba(255,122,182,.10);
+    }
+
+    .notice.gold {
+      border-color: rgba(255,211,107,.35);
+      background: rgba(255,211,107,.10);
+    }
+
+    .review {
+      padding: 16px;
+      margin-bottom: 10px;
+      color: #f8eef4;
+      line-height: 1.45;
+    }
+
+    .review .stars {
+      color: var(--gold);
+      margin-bottom: 8px;
+    }
 
     .gift-card {
-      margin: 14px 0; height: 220px; border-radius: 26px; padding: 24px;
-      display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
-      background:
-        linear-gradient(135deg, rgba(255,226,236,.95), rgba(226,144,174,.95)),
-        url('https://images.unsplash.com/photo-1513201099705-a9746e1e201f?auto=format&fit=crop&w=1000&q=80');
-      background-size: cover; color: #4b1731; font-family: Georgia, serif;
+      margin: 14px 0;
+      height: 220px;
+      border-radius: 26px;
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      background: linear-gradient(135deg, rgba(255,226,236,.95), rgba(226,144,174,.95));
+      color: #4b1731;
+      font-family: Georgia, serif;
       box-shadow: inset 0 0 0 1px rgba(255,255,255,.45);
     }
-    .gift-card b { font-size: 28px; letter-spacing: 1px; }
-    .gift-card span { margin-top: 10px; }
+
+    .gift-card b {
+      font-size: 28px;
+      letter-spacing: 1px;
+    }
+
+    .gift-card span {
+      margin-top: 10px;
+    }
 
     .bottom {
-      position: fixed; left: 0; right: 0; bottom: 0; z-index: 80;
-      max-width: 520px; margin: 0 auto;
-      display: grid; grid-template-columns: repeat(5, 1fr);
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 80;
+      max-width: 520px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
       padding: 9px 8px 17px;
       background: rgba(6,6,8,.86);
       backdrop-filter: blur(22px);
       border-top: 1px solid var(--line);
     }
+
     .nav {
-      display: flex; flex-direction: column; align-items: center; gap: 4px;
-      color: var(--muted); font-size: 11px; cursor: pointer; border-radius: 16px; padding: 6px 2px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      cursor: pointer;
+      border-radius: 16px;
+      padding: 6px 2px;
     }
-    .nav .nicon { font-size: 23px; line-height: 1; }
-    .nav.active { color: var(--pink); background: rgba(255,122,182,.08); }
+
+    .nav .nicon {
+      font-size: 23px;
+      line-height: 1;
+    }
+
+    .nav.active {
+      color: var(--pink);
+      background: rgba(255,122,182,.08);
+    }
+
     .sparkle {
-      transform: translateY(-14px); width: 62px; height: 62px; border-radius: 50%;
-      display: grid; place-items: center; font-size: 28px; color: white;
+      transform: translateY(-14px);
+      width: 62px;
+      height: 62px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 28px;
+      color: white;
       background: linear-gradient(135deg, var(--pink), var(--pink2));
       box-shadow: 0 16px 40px rgba(255,122,182,.35);
     }
 
-    .mini-list { margin: 0; padding-left: 18px; color: #f5e8ef; line-height: 1.6; }
-    .divider { height: 1px; background: var(--line); margin: 14px 0; }
-    .small { color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .mini-list {
+      margin: 0;
+      padding-left: 18px;
+      color: #f5e8ef;
+      line-height: 1.6;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--line);
+      margin: 14px 0;
+    }
   </style>
 </head>
 
@@ -192,7 +417,7 @@
   <div class="app">
     <div class="top">
       <button id="backBtn" class="back" onclick="goBack()">‹</button>
-      <div class="logo">B</div>
+      <div class="logo"></div>
       <div class="title">
         <b>Брови | Ламінування вій</b>
         <span>beauty webapp</span>
@@ -200,11 +425,10 @@
       <div class="dots">•••</div>
     </div>
 
-    <!-- HOME -->
     <section id="home" class="page active">
-      <div class="hero home-hero">
-        <h1>BROWS & LASHES</h1>
-        <p>Брови та вії, які виглядають дорого 💖</p>
+      <div class="hero">
+        <h1>БРОВИ | ЛАМІ</h1>
+        <p>Твоя краса — моя робота 💖</p>
       </div>
 
       <div class="bubble">
@@ -223,14 +447,13 @@
         <div class="card" onclick="openPage('portfolio')"><div class="icon">🖼️</div><b>Портфоліо</b><span>Роботи майстра</span></div>
         <div class="card" onclick="openPage('reviews')"><div class="icon">⭐</div><b>Відгуки</b><span>Думки клієнтів</span></div>
         <div class="card" onclick="openPage('price')"><div class="icon">💰</div><b>Прайс</b><span>Ціни та тривалість</span></div>
-        <div class="card" onclick="openPage('course')"><div class="icon">🎓</div><b>Навчання</b><span>Brow Master Start</span></div>
+        <div class="card" onclick="openPage('course')"><div class="icon">🎓</div><b>Навчання</b><span>Курси для майстрів</span></div>
         <div class="card wide" onclick="openPage('contact')"><div class="icon">💌</div><b>Звʼязатися з майстром</b><span>Telegram та Instagram</span></div>
       </div>
     </section>
 
-    <!-- BOOK -->
     <section id="book" class="page">
-      <div class="hero book-hero"><h1>Запис на процедуру</h1><p>Обери послугу, а далі бот допоможе вибрати дату, час і відправити чек.</p></div>
+      <div class="hero"><h1>Запис на процедуру</h1><p>Обери послугу, дату, час і надішли чек передоплати.</p></div>
       <div class="bubble">
         <b>Як проходить запис:</b><br>
         1️⃣ Вводиш імʼя<br>
@@ -243,18 +466,16 @@
       <button class="btn secondary" onclick="openPage('price')">💰 Спочатку подивитися прайс</button>
     </section>
 
-    <!-- MY BOOKING -->
     <section id="my" class="page">
-      <div class="hero book-hero"><h1>Мій запис</h1><p>Перегляд актуального запису та можливість скасування.</p></div>
+      <div class="hero"><h1>Мій запис</h1><p>Перегляд актуального запису та можливість скасування.</p></div>
       <div class="notice pink">
         Усі активні записи зберігаються в боті. Натисни кнопку нижче — бот покаже твій запис, статус оплати та кнопку скасування.
       </div>
       <button class="btn" onclick="sendToBot('my_booking')">🗓 Показати мій запис</button>
     </section>
 
-    <!-- VIP -->
     <section id="vip" class="page">
-      <div class="hero vip-hero"><h1>VIP запис 💎</h1><p>Для тих, хто цінує гнучкість, комфорт та пріоритет.</p></div>
+      <div class="hero"><h1>VIP запис 💎</h1><p>Для тих, хто цінує гнучкість, комфорт та пріоритет.</p></div>
       <div class="notice gold">
         <b>VIP відкриває додаткові години:</b><br>
         🌅 07:00, 07:30, 08:00, 08:30, 09:00<br>
@@ -269,9 +490,8 @@
       <button class="btn secondary" onclick="sendToBot('book')">🌸 Записатися</button>
     </section>
 
-    <!-- GIFT -->
     <section id="gift" class="page">
-      <div class="hero gift-hero"><h1>Подарунковий сертифікат</h1><p>Красивий подарунок для близької людини 🎁</p></div>
+      <div class="hero"><h1>Подарунковий сертифікат</h1><p>Красивий подарунок для близької людини 🎁</p></div>
       <div class="gift-card"><b>ПОДАРУНКОВИЙ<br>СЕРТИФІКАТ</b><span>для тебе ♥</span></div>
       <div class="notice pink">
         ✨ Будь-яка сума на ваш вибір<br>
@@ -287,9 +507,8 @@
       <button class="btn secondary" onclick="sendToBot('contact')">💌 Звʼязатися з майстром</button>
     </section>
 
-    <!-- PRICE -->
     <section id="price" class="page">
-      <div class="hero price-hero"><h1>PRICE LIST</h1><p>Найкращий час для краси ✨</p></div>
+      <div class="hero"><h1>PRICE LIST</h1><p>Послуги та ціни ✨</p></div>
 
       <div class="section-title">ОФОРМЛЕННЯ БРІВ</div>
       <div class="service"><div><b>🤎 Корекція брів</b><small>віск + пінцет • 30 хв</small></div><strong>300 грн</strong></div>
@@ -311,9 +530,8 @@
       <button class="btn" onclick="sendToBot('book')">🌸 Записатися</button>
     </section>
 
-    <!-- PORTFOLIO -->
     <section id="portfolio" class="page">
-      <div class="hero portfolio-hero"><h1>Портфоліо</h1><p>Результати, які виглядають дорого, доглянуто та натурально.</p></div>
+      <div class="hero"><h1>Портфоліо</h1><p>Результати, які виглядають дорого, доглянуто та натурально.</p></div>
       <div class="bubble">
         У боті майстер може додавати реальні фото робіт. Натисни кнопку нижче, щоб переглянути актуальне портфоліо.
       </div>
@@ -321,9 +539,8 @@
       <button class="btn secondary" onclick="sendToBot('book')">💖 Хочу такий результат</button>
     </section>
 
-    <!-- REVIEWS -->
     <section id="reviews" class="page">
-      <div class="hero reviews-hero"><h1>Відгуки клієнтів</h1><p>Довіра починається з реальних емоцій ⭐</p></div>
+      <div class="hero"><h1>Відгуки клієнтів</h1><p>Довіра починається з реальних емоцій ⭐</p></div>
       <div class="review"><div class="stars">★★★★★</div>«Дуже задоволена результатом, брови виглядають акуратно й натурально!»</div>
       <div class="review"><div class="stars">★★★★★</div>«Майстер дуже уважна до деталей, усе комфортно і красиво.»</div>
       <div class="review"><div class="stars">★★★★★</div>«Після ламінування погляд став набагато виразнішим. Рекомендую!»</div>
@@ -331,27 +548,52 @@
       <button class="btn secondary" onclick="sendToBot('leave_review')">💬 Залишити відгук</button>
     </section>
 
-    <!-- COURSE -->
     <section id="course" class="page">
-      <div class="hero course-hero"><h1>Brow Master Start</h1><p>Навчання для тих, хто хоче стартувати у beauty-сфері.</p></div>
+      <div class="hero"><h1>Навчання</h1><p>Курси для тих, хто хоче стартувати у beauty-сфері.</p></div>
+
       <div class="bubble">
-        <b>На курсі ви навчитеся:</b>
+        <b>ПРОГРАМА КУРСУ «БРОВІСТ З НУЛЯ»</b><br>
+        Тривалість курсу: 3 дні.
         <ul class="mini-list">
-          <li>підбирати форму брів</li>
-          <li>працювати з фарбуванням</li>
-          <li>робити ламінування</li>
-          <li>спілкуватися з клієнтами</li>
-          <li>стартувати як майстер</li>
+          <li>Організація робочого місця майстра</li>
+          <li>Комунікація з клієнтом</li>
+          <li>Інструменти та матеріали</li>
+          <li>Дезінфекція та стерилізація</li>
+          <li>Морфологія обличчя та розмітка брів</li>
+          <li>Корекція + фарбування брів</li>
+          <li>Ламінування брів</li>
+          <li>Професійний розвиток майстра</li>
+          <li>Практика на моделях</li>
+          <li>Сертифікат після завершення</li>
         </ul>
         <div class="divider"></div>
-        <b>Вартість:</b> 6000 грн
+        <b>Вартість:</b> 7500 грн
       </div>
+
+      <div class="bubble">
+        <b>ПРОГРАМА КУРСУ «ЛАМІМЕЙКЕР З НУЛЯ»</b><br>
+        Тривалість курсу: 2 дні.
+        <ul class="mini-list">
+          <li>Що таке ламінування вій</li>
+          <li>Анатомія вій та фази росту</li>
+          <li>Професійні складники для ламінування</li>
+          <li>Підбір валиків</li>
+          <li>Техніка викладки вій</li>
+          <li>Фарбування та ботокс</li>
+          <li>Стартовий набір майстра</li>
+          <li>Практика на моделях</li>
+          <li>Фото- та відеоконтент</li>
+          <li>Сертифікат після завершення</li>
+        </ul>
+        <div class="divider"></div>
+        <b>Вартість:</b> 6500 грн
+      </div>
+
       <button class="btn" onclick="sendToBot('course')">🎓 Хочу на курс</button>
     </section>
 
-    <!-- CONTACT -->
     <section id="contact" class="page">
-      <div class="hero contact-hero"><h1>Контакти</h1><p>Звʼяжіться з майстром для уточнення деталей.</p></div>
+      <div class="hero"><h1>Контакти</h1><p>Звʼяжіться з майстром для уточнення деталей.</p></div>
       <div class="bubble">
         <b>Telegram:</b> @k_dmt<br>
         <b>Instagram:</b> @karolina_baldich<br><br>
@@ -415,6 +657,7 @@
       leave_review: "leave_review",
       planned: "planned",
     };
+
     const data = map[action] || action;
 
     if (tg) {
