@@ -1,0 +1,4105 @@
+import asyncio
+import sqlite3
+import calendar
+from datetime import datetime, timedelta
+
+from aiohttp import web
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.types import (
+    Message,
+    CallbackQuery,
+    ReplyKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardRemove,
+    InputMediaPhoto,
+    WebAppInfo,
+)
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# ===================== НАЛАШТУВАННЯ =====================
+
+BOT_TOKEN = "8693924922:AAFjS7SewkluUETN_LFYpMZiT9-iSJRGuAs"
+ADMIN_ID = 1850825312
+
+MASTER_USERNAME = "@k_dmt"
+MASTER_INSTAGRAM = "@karolina_baldich"
+
+CARD_NUMBER = "4441114403277757"
+CARD_NAME = "Кароліна Балдіч"
+PREPAY_AMOUNT = "150 грн"
+
+COURSE_NAME = "Brow Master Start"
+COURSE_PRICE = "6000 грн
+
+# =========================================================
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+conn = sqlite3.connect("beauty_v10_fixed_ua.db")
+cur = conn.cursor()
+
+cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS slots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    date TEXT,
+    time TEXT,
+    is_taken INTEGER DEFAULT 0
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS bookings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    name TEXT,
+    service TEXT,
+    price TEXT,
+    date TEXT,
+    time TEXT,
+    status TEXT,
+    payment_status TEXT,
+    reminder_24_sent INTEGER DEFAULT 0,
+    reminder_2_sent INTEGER DEFAULT 0,
+    admin_24_sent INTEGER DEFAULT 0,
+    admin_2_sent INTEGER DEFAULT 0,
+    review_request_sent INTEGER DEFAULT 0
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS portfolio (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id TEXT,
+    caption TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS course_leads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    name TEXT,
+    phone TEXT,
+    format TEXT,
+    username TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS planned_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    name TEXT,
+    service TEXT,
+    date TEXT,
+    time TEXT,
+    username TEXT,
+    status TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS slot_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    booking_id INTEGER,
+    date TEXT,
+    time TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS client_stats (
+    user_id INTEGER PRIMARY KEY,
+    visits INTEGER DEFAULT 0,
+    vip INTEGER DEFAULT 0
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS reviews (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_id TEXT,
+    text TEXT
+)
+""")
+
+cur.execute("""
+CREATE TABLE IF NOT EXISTS course_funnel (
+    user_id INTEGER PRIMARY KEY,
+    viewed_at TEXT,
+    reminder_sent INTEGER DEFAULT 0
+)
+""")
+
+conn.commit()
+
+# Міграція для старої бази: додаємо колонку для запиту відгуку, якщо її ще немає
+try:
+    cur.execute("ALTER TABLE bookings ADD COLUMN review_request_sent INTEGER DEFAULT 0")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass
+
+try:
+    cur.execute("ALTER TABLE bookings ADD COLUMN admin_24_sent INTEGER DEFAULT 0")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass
+
+try:
+    cur.execute("ALTER TABLE bookings ADD COLUMN admin_2_sent INTEGER DEFAULT 0")
+    conn.commit()
+except sqlite3.OperationalError:
+    pass
+
+user_data = {}
+screen_msg = {}
+keyboard_anchor_msg = {}
+pending_notifications = {}
+admin_selected_bookings = {}
+admin_selected_slots = {}
+keyboard_msg = {}
+
+SERVICES = {
+    "brow_correction": ("🤎 Корекція брів \nвіск + пінцет", "300 грн"),
+    "brow_coloring": ("🎨 Фарбування брів", "300 грн"),
+    "men_brow": ("🧔 Чоловіча корекція брів \nвіск", "350 грн"),
+    "brow_correction_coloring": ("🤎 Корекція + фарбування брів", "450 грн"),
+
+    "brow_lami_correction": ("✨ Ламінування брів + корекція", "550 грн"),
+    "brow_lami_full": ("💎 Ламінування брів + фарбування + корекція + ботокс", "700 грн"),
+
+    "lash_lami_full": ("👁 Ламінування вій + фарбування + ботокс", "700 грн"),
+    "lash_coloring": ("🎨 Окремо фарбування вій", "150 грн"),
+
+    "combo_full": ("🔥 Комплекс: ламі брів + ламі вій", "1450 грн"),
+}
+
+NORMAL_TIMES = [
+    "10:00", "10:30", "11:00", "11:30",
+    "12:00", "12:30", "13:00", "13:30",
+    "14:00", "14:30", "15:00", "15:30",
+    "16:00", "16:30", "17:00", "17:30",
+    "18:00",
+]
+
+VIP_EXTRA_TIMES = [
+    "07:00", "07:30", "08:00", "08:30", "09:00",
+    "19:00", "19:30", "20:00",
+]
+
+TIMES = VIP_EXTRA_TIMES[:5] + NORMAL_TIMES + VIP_EXTRA_TIMES[5:]
+
+MONTHS_UA = {
+    1: "Січень", 2: "Лютий", 3: "Березень", 4: "Квітень",
+    5: "Травень", 6: "Червень", 7: "Липень", 8: "Серпень",
+    9: "Вересень", 10: "Жовтень", 11: "Листопад", 12: "Грудень"
+}
+
+
+# ===================== ДОПОМІЖНІ ФУНКЦІЇ =====================
+
+def save_user(user_id: int):
+    cur.execute("INSERT OR IGNORE INTO users (user_id) VALUES (?)", (user_id,))
+    conn.commit()
+
+
+def is_vip_time(time: str) -> bool:
+    return time in VIP_EXTRA_TIMES
+
+
+def is_user_vip(user_id: int) -> bool:
+    return user_data.get(user_id, {}).get("vip") == "VIP-пріоритет"
+
+
+def vip_limit_reached(date: str) -> bool:
+    """
+    Максимум 3 VIP-записи на одну дату.
+    Рахуємо підтверджені та очікуючі заявки з VIP у ціні.
+    """
+    cur.execute("""
+    SELECT COUNT(*) FROM bookings
+    WHERE date=? AND price LIKE '%VIP%' AND status!='❌ Відхилено'
+    """, (date,))
+    count = cur.fetchone()[0]
+    return count >= 3
+
+
+def get_block_times_for_one_hour(start_time: str):
+    """
+    Процедура займає мінімум 1 годину.
+    При кроці 30 хвилин блокуємо:
+    - попередній слот на 30 хв
+    - вибраний слот
+    - наступний слот на 30 хв
+    Так інші клієнти не зможуть записатися впритул або з накладкою.
+    """
+    base = datetime.strptime(start_time, "%H:%M")
+    times = [
+        (base - timedelta(minutes=30)).strftime("%H:%M"),
+        base.strftime("%H:%M"),
+        (base + timedelta(minutes=30)).strftime("%H:%M"),
+    ]
+    return times
+
+
+def block_nearby_slots(booking_id: int, date: str, start_time: str):
+    blocked_times = get_block_times_for_one_hour(start_time)
+
+    for t in blocked_times:
+        cur.execute("UPDATE slots SET is_taken=1 WHERE date=? AND time=?", (date, t))
+        cur.execute(
+            "INSERT INTO slot_blocks (booking_id, date, time) VALUES (?, ?, ?)",
+            (booking_id, date, t)
+        )
+
+    conn.commit()
+
+
+def release_blocked_slots(booking_id: int):
+    cur.execute("SELECT date, time FROM slot_blocks WHERE booking_id=?", (booking_id,))
+    rows = cur.fetchall()
+
+    for date, time in rows:
+        cur.execute("UPDATE slots SET is_taken=0 WHERE date=? AND time=?", (date, time))
+
+    cur.execute("DELETE FROM slot_blocks WHERE booking_id=?", (booking_id,))
+    conn.commit()
+
+
+def bottom_menu(user_id: int):
+    """
+    PRO MENU:
+    Нижняя панель короткая, а красивое меню-карточки открывается в основном сообщении.
+    """
+    buttons = [
+        [KeyboardButton(text="💎 Відкрити WebApp", web_app=WebAppInfo(url=WEBAPP_URL))],
+        [KeyboardButton(text="🌸 Записатися"), KeyboardButton(text="✨ Меню")],
+        [KeyboardButton(text="🗓 Мій запис"), KeyboardButton(text="📸 Портфоліо")],
+    ]
+
+    return ReplyKeyboardMarkup(
+        keyboard=buttons,
+        resize_keyboard=True,
+        is_persistent=True,
+        input_field_placeholder="Оберіть дію 👇"
+    )
+
+
+async def delete_user_message(message: Message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+async def show_screen(chat_id: int, user_id: int, text: str, reply_markup=None):
+    """
+    Один основний екран у чаті.
+    Бот старається редагувати його, а не створювати багато нових повідомлень.
+    Нижня панель залишається окремо і не дублюється.
+    """
+    msg_id = screen_msg.get(user_id)
+
+    if msg_id:
+        try:
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=msg_id,
+                text=text,
+                reply_markup=reply_markup
+            )
+            return
+        except Exception:
+            try:
+                await bot.delete_message(chat_id, msg_id)
+            except Exception:
+                pass
+
+    msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
+    screen_msg[user_id] = msg.message_id
+
+
+def pro_main_menu(user_id: int):
+    kb = InlineKeyboardBuilder()
+
+    # WebApp-кнопка открывает красивое приложение внутри Telegram
+    kb.button(text="💎 Відкрити красиве меню", web_app=WebAppInfo(url=WEBAPP_URL))
+
+    # Основные карточки меню
+    kb.button(text="🌸 Записатися", callback_data="book_back")
+    kb.button(text="🗓 Мій запис", callback_data="my_booking")
+
+    kb.button(text="💎 VIP запис", callback_data="vip_info")
+    kb.button(text="🎁 Сертифікат -10%", callback_data="gift_certificate")
+
+    kb.button(text="💰 Прайс", callback_data="price_list")
+    kb.button(text="📸 Портфоліо", callback_data="portfolio")
+
+    kb.button(text="⭐ Відгуки", callback_data="reviews")
+    kb.button(text="🎓 Навчання", callback_data="more_course")
+
+    kb.button(text="💌 Звʼязатися з майстром", callback_data="more_contact")
+
+    if user_id == ADMIN_ID:
+        kb.button(text="👑 Адмін-панель", callback_data="more_admin")
+
+    kb.adjust(1, 2, 2, 2, 2, 1, 1)
+    return kb.as_markup()
+
+
+async def show_main_menu(chat_id: int, user_id: int):
+    await show_screen(
+        chat_id,
+        user_id,
+        "💖 Привіт, красуне 💖\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Твоя краса — моя робота ✨\n\n"
+        "Тут можна швидко записатися, переглянути прайс, портфоліо, відгуки або оформити подарунковий сертифікат 🎁\n\n"
+        "Оберіть потрібний розділ:",
+        pro_main_menu(user_id)
+    )
+
+
+def nav_buttons(back_to="main"):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🔙 Назад", callback_data=back_to)
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def admin_menu():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ Додати вільні вікна", callback_data="admin_add_slots")
+    kb.button(text="🗑 Видалити вікно", callback_data="admin_delete_slot")
+    kb.button(text="📅 Вільні вікна", callback_data="admin_free_slots")
+    kb.button(text="📋 Усі записи", callback_data="admin_all_bookings")
+    kb.button(text="🎓 Заявки на курс", callback_data="admin_course_leads")
+    kb.button(text="📝 Заплановані запити", callback_data="admin_planned_requests")
+    kb.button(text="💎 CRM клієнтів", callback_data="admin_crm")
+    kb.button(text="📸 Керування портфоліо", callback_data="portfolio_admin")
+    kb.button(text="⭐ Керування відгуками", callback_data="reviews_admin")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def course_menu():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📋 Програма курсу", callback_data="course_program")
+    kb.button(text="💰 Вартість", callback_data="course_price")
+    kb.button(text="💬 Хочу на курс", callback_data="course_apply")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def portfolio_admin_menu():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ Додати фото", callback_data="portfolio_add")
+    kb.button(text="🗑 Видалити фото", callback_data="portfolio_delete")
+    kb.button(text="👀 Переглянути портфоліо", callback_data="portfolio")
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def reviews_admin_menu():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ Додати відгук", callback_data="review_add")
+    kb.button(text="🗑 Видалити відгук", callback_data="review_delete")
+    kb.button(text="👀 Переглянути відгуки", callback_data="reviews_view")
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def make_calendar(prefix, year=None, month=None):
+    now = datetime.now()
+    year = year or now.year
+    month = month or now.month
+
+    if month < 1:
+        month = 12
+        year -= 1
+    elif month > 12:
+        month = 1
+        year += 1
+
+    kb = InlineKeyboardBuilder()
+
+    kb.button(text="⬅️", callback_data=f"{prefix}_month_{year}_{month - 1}")
+    kb.button(text=f"{MONTHS_UA[month]} {year}", callback_data="none")
+    kb.button(text="➡️", callback_data=f"{prefix}_month_{year}_{month + 1}")
+
+    for d in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Нд"]:
+        kb.button(text=d, callback_data="none")
+
+    for week in calendar.monthcalendar(year, month):
+        for day in week:
+            if day == 0:
+                kb.button(text=" ", callback_data="none")
+            else:
+                date = f"{day:02d}.{month:02d}.{year}"
+                kb.button(text=str(day), callback_data=f"{prefix}_date_{date}")
+
+    kb.button(text="🔙 Назад", callback_data="admin_panel" if prefix.startswith("admin") else "book_back")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+
+    kb.adjust(3, 7, 7, 7, 7, 7, 7, 1, 1)
+    return kb.as_markup()
+
+
+def multi_time_keyboard(date, selected_times=None):
+    selected_times = selected_times or []
+    kb = InlineKeyboardBuilder()
+
+    for t in TIMES:
+        mark = "✅" if t in selected_times else "🕒"
+        kb.button(text=f"{mark} {t}", callback_data=f"toggle_time_{date}_{t}")
+
+    kb.button(text="✅ Додати вибрані вікна", callback_data=f"save_times_{date}")
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(4, 4, 4, 4, 4, 4, 1, 1)
+    return kb.as_markup()
+
+
+def user_time_keyboard(date, user_id):
+    cur.execute("SELECT time FROM slots WHERE date=? AND is_taken=0 ORDER BY time", (date,))
+    rows = cur.fetchall()
+
+    vip = is_user_vip(user_id)
+
+    visible_times = []
+    for (time,) in rows:
+        if not vip and is_vip_time(time):
+            continue
+        visible_times.append(time)
+
+    morning_vip = [t for t in visible_times if t in ["07:00", "07:30", "08:00", "08:30", "09:00"]]
+    day_times = [t for t in visible_times if t not in VIP_EXTRA_TIMES]
+    evening_vip = [t for t in visible_times if t in ["19:00", "19:30", "20:00"]]
+
+    kb = InlineKeyboardBuilder()
+    layout = []
+
+    def add_section(title, times, emoji, row_size=4):
+        if not times:
+            return
+
+        kb.button(text=title, callback_data="none")
+        layout.append(1)
+
+        for t in times:
+            kb.button(text=f"{emoji} {t}", callback_data=f"user_time_{date}_{t}")
+
+        for i in range(0, len(times), row_size):
+            layout.append(min(row_size, len(times) - i))
+
+    if vip:
+        add_section("🌅 VIP-ранок", morning_vip, "💎", 4)
+
+    add_section("☀️ День", day_times, "🕒", 4)
+
+    if vip:
+        add_section("🌙 VIP-вечір", evening_vip, "💎", 4)
+
+    kb.button(text="🔙 Назад", callback_data="book_calendar")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    layout.extend([1, 1])
+
+    kb.adjust(*layout)
+
+    return kb.as_markup(), [(t,) for t in visible_times]
+
+
+# ===================== АВТОПОВІДОМЛЕННЯ =====================
+
+async def notify_today_slots(date, added_times):
+    today = datetime.now().strftime("%d.%m.%Y")
+    if date != today:
+        return
+
+    cur.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+
+    times_text = "\n".join([f"🕒 {t}" for t in sorted(added_times)])
+
+    for (user_id,) in users:
+        if user_id == ADMIN_ID:
+            continue
+        try:
+            await send_or_queue_notification(
+                user_id,
+                "🔥 Зʼявилися вільні вікна на сьогодні!\n\n"
+                f"📅 Дата: {date}\n"
+                f"{times_text}\n\n"
+                "Щоб записатися, натисніть «🌸 Записатися»."
+            )
+        except Exception:
+            pass
+
+
+async def follow_up_reminder(user_id: int):
+    """
+    М'яке нагадування, якщо клієнт почав запис, але не завершив його.
+    Спрацьовує через 2 години.
+    """
+    await asyncio.sleep(7200)
+
+    data = user_data.get(user_id)
+    if not data:
+        return
+
+    step = data.get("step")
+    if step in ["name", "receipt", "planned_name", "planned_date", "planned_time"]:
+        try:
+            await send_or_queue_notification(
+                user_id,
+                f"💖 {user_data.get(user_id, {}).get('name', 'Красуне')}, ви не завершили запис\n\n"
+                "Є ще кілька вільних місць найближчим часом ✨\n"
+                "Якщо хочете, можете повернутися до запису через нижню панель 🌸"
+            )
+        except Exception:
+            pass
+
+
+async def repeat_booking_reminder():
+    """
+    Нагадування про повторний запис.
+    Один раз на добу перевіряє записи, які були приблизно 21 день тому.
+    """
+    while True:
+        now = datetime.now()
+
+        cur.execute("""
+        SELECT user_id, name, service, date
+        FROM bookings
+        WHERE status='✅ Підтверджено'
+        """)
+
+        rows = cur.fetchall()
+
+        for user_id, name, service, date in rows:
+            try:
+                booking_date = datetime.strptime(date, "%d.%m.%Y")
+                diff_days = (now.date() - booking_date.date()).days
+
+                if diff_days == 21:
+                    await send_or_queue_notification(
+                        user_id,
+                        f"✨ {name}, час оновити результат\n\n"
+                        f"Минуло вже близько 3 тижнів після процедури: {service}\n"
+                        "Можете записатися знову через нижню панель 🌸"
+                    )
+            except Exception:
+                pass
+
+        await asyncio.sleep(86400)
+
+
+def is_user_busy(user_id: int) -> bool:
+    """
+    Якщо клієнт зараз проходить запис/відгук/курс — не перебиваємо його авто-повідомленнями.
+    """
+    return user_id in user_data and bool(user_data.get(user_id, {}).get("step"))
+
+
+def queue_notification(user_id: int, text: str):
+    pending_notifications.setdefault(user_id, []).append(text)
+
+
+async def send_or_queue_notification(user_id: int, text: str, reply_markup=None):
+    """
+    Авто-сповіщення не перебивають оформлення запису.
+    Якщо клієнт зараз у процесі — повідомлення відкладається.
+    """
+    if is_user_busy(user_id):
+        queue_notification(user_id, text)
+        return
+
+    try:
+        await bot.send_message(user_id, text, reply_markup=reply_markup)
+    except Exception:
+        pass
+
+
+async def flush_pending_notifications(user_id: int):
+    items = pending_notifications.pop(user_id, [])
+    for text in items:
+        try:
+            await bot.send_message(user_id, text)
+        except Exception:
+            pass
+
+
+async def reminders_loop():
+    while True:
+        now = datetime.now()
+
+        cur.execute("""
+        SELECT id, user_id, name, service, date, time,
+               reminder_24_sent, reminder_2_sent,
+               admin_24_sent, admin_2_sent
+        FROM bookings
+        WHERE status='✅ Підтверджено'
+        """)
+
+        rows = cur.fetchall()
+
+        for booking_id, user_id, name, service, date, time, r24, r2, a24, a2 in rows:
+            try:
+                dt = datetime.strptime(f"{date} {time}", "%d.%m.%Y %H:%M")
+                diff = dt - now
+
+                # ===== Нагадування клієнту за 24 години =====
+                if timedelta(hours=23, minutes=50) <= diff <= timedelta(hours=24, minutes=10) and r24 == 0:
+                    kb = InlineKeyboardBuilder()
+                    kb.button(text="😉 Я памʼятаю, дякую", callback_data=f"remember_booking_{booking_id}")
+                    kb.button(text="❌ Скасувати запис", callback_data=f"cancel_warn_{booking_id}")
+                    kb.adjust(1)
+
+                    await send_or_queue_notification(
+                        user_id,
+                        f"⏰ {name}, нагадування!\n\n"
+                        f"Завтра у вас запис:\n"
+                        f"💅 Послуга: {service}\n"
+                        f"📅 Дата: {date}\n"
+                        f"🕒 Час: {time}",
+                        reply_markup=kb.as_markup()
+                    )
+                    cur.execute("UPDATE bookings SET reminder_24_sent=1 WHERE id=?", (booking_id,))
+                    conn.commit()
+
+                # ===== Нагадування адміну за 24 години =====
+                if timedelta(hours=23, minutes=50) <= diff <= timedelta(hours=24, minutes=10) and a24 == 0:
+                    kb_admin = InlineKeyboardBuilder()
+                    kb_admin.button(text="📋 Відкрити запис", callback_data=f"booking_manage_{booking_id}")
+                    kb_admin.button(text="✅ Закрити як виконаний", callback_data=f"booking_complete_{booking_id}")
+                    kb_admin.adjust(1)
+
+                    await bot.send_message(
+                        ADMIN_ID,
+                        "👑 Нагадування для майстра\n\n"
+                        "Завтра у вас запис:\n"
+                        f"👤 Клієнт: {name}\n"
+                        f"💅 Послуга: {service}\n"
+                        f"📅 Дата: {date}\n"
+                        f"🕒 Час: {time}\n"
+                        f"🆔 Запис #{booking_id}",
+                        reply_markup=kb_admin.as_markup()
+                    )
+                    cur.execute("UPDATE bookings SET admin_24_sent=1 WHERE id=?", (booking_id,))
+                    conn.commit()
+
+                # ===== Нагадування клієнту за 2 години =====
+                if timedelta(hours=1, minutes=50) <= diff <= timedelta(hours=2, minutes=10) and r2 == 0:
+                    kb = InlineKeyboardBuilder()
+                    kb.button(text="😉 Я памʼятаю, дякую", callback_data=f"remember_booking_{booking_id}")
+                    kb.button(text="❌ Скасувати запис", callback_data=f"cancel_warn_{booking_id}")
+                    kb.adjust(1)
+
+                    await send_or_queue_notification(
+                        user_id,
+                        f"⏰ {name}, нагадування!\n\n"
+                        f"Через 2 години у вас запис:\n"
+                        f"💅 Послуга: {service}\n"
+                        f"📅 Дата: {date}\n"
+                        f"🕒 Час: {time}",
+                        reply_markup=kb.as_markup()
+                    )
+                    cur.execute("UPDATE bookings SET reminder_2_sent=1 WHERE id=?", (booking_id,))
+                    conn.commit()
+
+                # ===== Нагадування адміну за 2 години =====
+                if timedelta(hours=1, minutes=50) <= diff <= timedelta(hours=2, minutes=10) and a2 == 0:
+                    kb_admin = InlineKeyboardBuilder()
+                    kb_admin.button(text="📋 Відкрити запис", callback_data=f"booking_manage_{booking_id}")
+                    kb_admin.button(text="✅ Закрити як виконаний", callback_data=f"booking_complete_{booking_id}")
+                    kb_admin.adjust(1)
+
+                    await bot.send_message(
+                        ADMIN_ID,
+                        "🔥 Скоро запис!\n\n"
+                        "Через 2 години потрібно прийняти клієнта:\n"
+                        f"👤 Клієнт: {name}\n"
+                        f"💅 Послуга: {service}\n"
+                        f"📅 Дата: {date}\n"
+                        f"🕒 Час: {time}\n"
+                        f"🆔 Запис #{booking_id}",
+                        reply_markup=kb_admin.as_markup()
+                    )
+                    cur.execute("UPDATE bookings SET admin_2_sent=1 WHERE id=?", (booking_id,))
+                    conn.commit()
+
+            except Exception:
+                pass
+
+        await asyncio.sleep(300)
+
+
+# ===================== СТАРТ / НИЖНЯ ПАНЕЛЬ =====================
+
+@dp.message(F.web_app_data)
+async def webapp_data_handler(message: Message):
+    """
+    Принимает данные из WebApp.
+    Сейчас WebApp отправляет тип действия:
+    book / gift / vip / price / portfolio / reviews / course / contact
+    """
+    save_user(message.from_user.id)
+
+    data = message.web_app_data.data
+
+    await delete_user_message(message)
+
+    if data == "book":
+        await start_booking(message.chat.id, message.from_user.id)
+        return
+
+    if data == "gift":
+        await show_gift_certificate(message.chat.id, message.from_user.id)
+        return
+
+    if data == "vip":
+        kb = InlineKeyboardBuilder()
+        kb.button(text="🌸 Обрати VIP під час запису", callback_data="book_back")
+        kb.button(text="🏠 Головне меню", callback_data="main")
+        kb.adjust(1)
+
+        await show_screen(
+            message.chat.id,
+            message.from_user.id,
+            "💎 VIP запис\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "VIP відкриває додаткові слоти:\n"
+            "🌅 07:00, 07:30, 08:00, 08:30, 09:00\n"
+            "🌙 19:00, 19:30, 20:00\n\n"
+            "🔥 Пріоритет у підтвердженні\n"
+            "⚠️ Кількість VIP-місць на день обмежена",
+            kb.as_markup()
+        )
+        return
+
+    if data == "price":
+        await show_price_list(message.chat.id, message.from_user.id)
+        return
+
+    if data == "portfolio":
+        await show_portfolio(message.chat.id, message.from_user.id)
+        return
+
+    if data == "reviews":
+        await show_reviews(message.chat.id, message.from_user.id)
+        return
+
+    if data == "course":
+        await show_course(message.chat.id, message.from_user.id)
+        return
+
+    if data == "contact":
+        await show_contact(message.chat.id, message.from_user.id)
+        return
+
+    await show_main_menu(message.chat.id, message.from_user.id)
+
+
+@dp.message(Command("start"))
+async def start(message: Message):
+    save_user(message.from_user.id)
+
+    old_screen_id = screen_msg.get(message.from_user.id)
+    if old_screen_id:
+        try:
+            await bot.delete_message(message.chat.id, old_screen_id)
+        except Exception:
+            pass
+        screen_msg.pop(message.from_user.id, None)
+
+    old_keyboard_id = keyboard_anchor_msg.get(message.from_user.id)
+    if old_keyboard_id:
+        try:
+            await bot.delete_message(message.chat.id, old_keyboard_id)
+        except Exception:
+            pass
+
+    # Активируем компактную нижнюю панель
+    msg = await message.answer(
+        "✨ Меню активне",
+        reply_markup=bottom_menu(message.from_user.id)
+    )
+    keyboard_anchor_msg[message.from_user.id] = msg.message_id
+
+    # Показываем красивое основное меню карточками
+    await show_main_menu(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "🌸 Записатися")
+async def bottom_book(message: Message):
+    await delete_user_message(message)
+    await start_booking(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "📝 Запланований запис")
+async def bottom_planned_request(message: Message):
+    await delete_user_message(message)
+    await start_planned_request(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "🗓 Мій запис")
+async def bottom_my(message: Message):
+    await delete_user_message(message)
+    await show_my_booking(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "📸 Портфоліо")
+async def bottom_portfolio(message: Message):
+    await delete_user_message(message)
+    await show_portfolio(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text.in_({"✨ Ще", "✨ Меню"}))
+async def bottom_more(message: Message):
+    await delete_user_message(message)
+    await show_main_menu(message.chat.id, message.from_user.id)
+
+
+async def show_more_menu(chat_id: int, user_id: int):
+    kb = InlineKeyboardBuilder()
+
+    kb.button(text="⭐ Відгуки", callback_data="reviews")
+    kb.button(text="💬 Залишити відгук", callback_data="leave_review")
+    kb.button(text="💰 Прайс", callback_data="price_list")
+    kb.button(text="🎓 Навчання / Курс", callback_data="more_course")
+    kb.button(text="🎁 Подарунковий сертифікат", callback_data="gift_certificate")
+    kb.button(text="📝 Запланований запис", callback_data="more_planned")
+    kb.button(text="💌 Звʼязатися з майстром", callback_data="more_contact")
+
+    if user_id == ADMIN_ID:
+        kb.button(text="👑 Адмін-панель", callback_data="more_admin")
+
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(2, 2, 1, 1, 1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "✨ Додаткові можливості\n\n"
+        "Оберіть потрібну дію:",
+        kb.as_markup()
+    )
+
+
+async def show_price_list(chat_id: int, user_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🌸 Записатися", callback_data="book_back")
+    kb.button(text="🎁 Сертифікат -10%", callback_data="gift_certificate")
+    kb.button(text="🔙 Назад", callback_data="more_menu")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "💰 PRICE LIST\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🤎 ОФОРМЛЕННЯ БРІВ\n"
+        "• Корекція \nвіск + пінцет — 300 грн | 30 хв\n"
+        "• Фарбування — 300 грн | 30 хв\n"
+        "• Чоловіча корекція \nвіск — 350 грн | 30 хв\n"
+        "• Корекція + фарбування — 450 грн | 45 хв\n\n"
+        "✨ ЛАМІНУВАННЯ БРІВ\n"
+        "• Ламінування брів + корекція — 550 грн | 40 хв\n"
+        "• Ламінування брів + фарбування + корекція + ботокс — 700 грн | 1 год\n\n"
+        "👁 ЛАМІНУВАННЯ ВІЙ\n"
+        "• Ламінування вій + фарбування + ботокс — 700 грн | 1 год\n"
+        "• Окремо фарбування вій — 150 грн | 15 хв\n\n"
+        "🔥 КОМПЛЕКС\n"
+        "• Ламі брів \nз корекцією та фарбуванням + ламі вій \nз фарбуванням та ботоксом — 1450 грн | 1,5 год\n\n"
+        "🎁 Подарунковий сертифікат — знижка 10%",
+        kb.as_markup()
+    )
+
+
+@dp.callback_query(F.data == "price_list")
+async def price_list_cb(cb: CallbackQuery):
+    await show_price_list(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+async def show_gift_certificate(chat_id: int, user_id: int):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎁 Хочу сертифікат", callback_data="gift_want")
+    kb.button(text="💌 Звʼязатися з майстром", callback_data="more_contact")
+    kb.button(text="🔙 Назад", callback_data="more_menu")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "🎁 Подарунковий сертифікат\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Ідеальний подарунок для подруги, мами, сестри або для себе 💖\n\n"
+        "✨ Сертифікат можна використати на:\n"
+        "• оформлення брів\n"
+        "• ламінування вій\n"
+        "• будь-яку beauty-процедуру у майстра\n\n"
+        "🔥 Спеціальна пропозиція:\n"
+        "при купівлі сертифіката — знижка 10% на процедуру для отримувача 🎀\n\n"
+        "💳 Оплата на карту.\n"
+        "Після оплати майстер підготує сертифікат та звʼяжеться з вами для уточнення деталей.",
+        kb.as_markup()
+    )
+
+
+@dp.callback_query(F.data == "gift_certificate")
+async def gift_certificate_cb(cb: CallbackQuery):
+    await show_gift_certificate(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "gift_want")
+async def gift_want_cb(cb: CallbackQuery):
+    username = cb.from_user.username or "без username"
+    name = cb.from_user.full_name or "Клієнт"
+
+    kb = InlineKeyboardBuilder()
+    if username != "без username":
+        kb.button(text="💬 Написати клієнту", url=f"https://t.me/{username}")
+    kb.adjust(1)
+
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            "🎁 Новий запит на подарунковий сертифікат!\n\n"
+            f"👤 Клієнт: {name}\n"
+            f"Telegram: @{username}\n\n"
+            "Клієнт зацікавився сертифікатом зі знижкою 10%.",
+            reply_markup=kb.as_markup() if username != "без username" else None
+        )
+    except Exception:
+        pass
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🎁 Запит на сертифікат відправлено майстру!\n\n"
+        "Майстер звʼяжеться з вами для уточнення суми, оплати та оформлення сертифіката 💖",
+        nav_buttons("more_menu")
+    )
+    await cb.answer("Запит відправлено")
+
+
+@dp.callback_query(F.data == "more_menu")
+async def more_menu_cb(cb: CallbackQuery):
+    await show_more_menu(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "my_booking")
+async def my_booking_cb(cb: CallbackQuery):
+    await show_my_booking(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "portfolio")
+async def portfolio_cb(cb: CallbackQuery):
+    await show_portfolio(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "vip_info")
+async def vip_info_cb(cb: CallbackQuery):
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🌸 Обрати VIP під час запису", callback_data="book_back")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "💎 VIP запис\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "VIP відкриває додаткові слоти:\n"
+        "🌅 07:00, 07:30, 08:00, 08:30, 09:00\n"
+        "🌙 19:00, 19:30, 20:00\n\n"
+        "🔥 Пріоритет у підтвердженні\n"
+        "⚠️ Кількість VIP-місць на день обмежена\n\n"
+        "Обрати VIP можна під час оформлення запису.",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "reviews")
+async def reviews_cb(cb: CallbackQuery):
+    await show_reviews(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "leave_review")
+async def leave_review_cb(cb: CallbackQuery):
+    await start_client_review(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "more_course")
+async def more_course_cb(cb: CallbackQuery):
+    await show_course(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "more_planned")
+async def more_planned_cb(cb: CallbackQuery):
+    await start_planned_request(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "more_contact")
+async def more_contact_cb(cb: CallbackQuery):
+    await show_contact(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "more_admin")
+async def more_admin_cb(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "👑 Адмін-панель:",
+        admin_menu()
+    )
+    await cb.answer()
+
+
+@dp.message(F.text == "⭐ Відгуки")
+async def bottom_reviews(message: Message):
+    await delete_user_message(message)
+    await show_reviews(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "⭐ Залишити відгук")
+async def bottom_leave_review(message: Message):
+    await delete_user_message(message)
+    await start_client_review(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "🎓 Навчання / Курс")
+async def bottom_course(message: Message):
+    await delete_user_message(message)
+    await show_course(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "💬 Звʼязатися з майстром")
+async def bottom_contact(message: Message):
+    await delete_user_message(message)
+    await show_contact(message.chat.id, message.from_user.id)
+
+
+@dp.message(F.text == "🏠 Головне меню")
+async def bottom_main(message: Message):
+    await delete_user_message(message)
+    await show_main_menu(message.chat.id, message.from_user.id)
+    await flush_pending_notifications(message.from_user.id)
+
+
+@dp.message(F.text == "👑 Адмін-панель")
+async def bottom_admin(message: Message):
+    await delete_user_message(message)
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    await show_screen(
+        message.chat.id,
+        message.from_user.id,
+        "👑 Адмін-панель:",
+        admin_menu()
+    )
+
+
+@dp.callback_query(F.data.startswith("remember_booking_"))
+async def remember_booking(cb: CallbackQuery):
+    try:
+        await cb.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    await cb.answer("Дякуємо, чекаємо вас 🌸", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("cancel_warn_"))
+async def cancel_warn(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("cancel_warn_", ""))
+
+    cur.execute("SELECT user_id, date, time, status FROM bookings WHERE id=?", (booking_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запис не знайдено", show_alert=True)
+        return
+
+    client_id, date, time, status = row
+
+    if cb.from_user.id != client_id:
+        await cb.answer("Це не ваш запис", show_alert=True)
+        return
+
+    if status in ("❌ Скасовано клієнтом", "❌ Відхилено"):
+        await cb.answer("Цей запис уже скасовано", show_alert=True)
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Так, скасувати запис", callback_data=f"cancel_confirm_{booking_id}")
+    kb.button(text="🔙 Ні, залишити запис", callback_data=f"cancel_keep_{booking_id}")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "⚠️ Підтвердження скасування\n\n"
+        f"📅 Дата: {date}\n"
+        f"🕒 Час: {time}\n\n"
+        "❗ Передоплата НЕ повертається після скасування запису.\n\n"
+        "Ви точно хочете скасувати запис?",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("cancel_keep_"))
+async def cancel_keep(cb: CallbackQuery):
+    await show_my_booking(cb.message.chat.id, cb.from_user.id)
+    await cb.answer("Запис залишено 🌸", show_alert=True)
+
+
+@dp.callback_query(F.data.startswith("cancel_confirm_"))
+async def cancel_confirm(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("cancel_confirm_", ""))
+
+    cur.execute("""
+    SELECT user_id, name, service, date, time, status
+    FROM bookings
+    WHERE id=?
+    """, (booking_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запис не знайдено", show_alert=True)
+        return
+
+    client_id, name, service, date, time, status = row
+
+    if cb.from_user.id != client_id:
+        await cb.answer("Це не ваш запис", show_alert=True)
+        return
+
+    if status in ("❌ Скасовано клієнтом", "❌ Відхилено"):
+        await cb.answer("Цей запис уже скасовано", show_alert=True)
+        return
+
+    cur.execute("""
+    UPDATE bookings
+    SET status='❌ Скасовано клієнтом',
+        payment_status='❌ Скасовано, передоплата не повертається'
+    WHERE id=?
+    """, (booking_id,))
+    conn.commit()
+
+    release_blocked_slots(booking_id)
+
+    await bot.send_message(
+        ADMIN_ID,
+        "❌ Клієнт скасував запис\n\n"
+        f"👤 Клієнт: {name}\n"
+        f"💅 Послуга: {service}\n"
+        f"📅 Дата: {date}\n"
+        f"🕒 Час: {time}\n\n"
+        "Передоплата не повертається згідно з попередженням."
+    )
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"❌ {name}, ваш запис скасовано.\n\n"
+        "Передоплата не повертається згідно з попередженням перед скасуванням.",
+        nav_buttons("main")
+    )
+
+    await cb.answer("Запис скасовано", show_alert=True)
+
+
+
+@dp.callback_query(F.data == "client_leave_review")
+async def client_leave_review_cb(cb: CallbackQuery):
+    await start_client_review(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "main")
+async def main_cb(cb: CallbackQuery):
+    await show_main_menu(cb.message.chat.id, cb.from_user.id)
+    await flush_pending_notifications(cb.from_user.id)
+    await cb.answer()
+
+
+async def start_booking(chat_id, user_id):
+    user_data[user_id] = {"step": "name"}
+    asyncio.create_task(follow_up_reminder(user_id))
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "🌸 Запис на процедуру\n\n"
+        "Введіть ваше імʼя повідомленням нижче:",
+        nav_buttons("main")
+    )
+
+
+async def start_planned_request(chat_id, user_id):
+    user_data[user_id] = {"step": "planned_name"}
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "📝 Запланований запис\n\n"
+        "Якщо потрібної дати або часу немає серед вільних вікон, "
+        "ви можете залишити запит майстру на конкретну дату, місяць і час.\n\n"
+        "Передоплата на цьому етапі не потрібна. "
+        "Після запиту майстер звʼяжеться з вами для уточнення.\n\n"
+        "Введіть ваше імʼя:",
+        nav_buttons("main")
+    )
+
+
+@dp.callback_query(F.data == "book_back")
+async def book_back(cb: CallbackQuery):
+    await start_booking(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "book_calendar")
+async def book_calendar(cb: CallbackQuery):
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📅 Оберіть дату:",
+        make_calendar("user")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("planned_service_"))
+async def planned_service_cb(cb: CallbackQuery):
+    key = cb.data.replace("planned_service_", "")
+
+    if key not in SERVICES:
+        await cb.answer("Помилка вибору")
+        return
+
+    service, price = SERVICES[key]
+
+    if cb.from_user.id not in user_data:
+        user_data[cb.from_user.id] = {}
+
+    user_data[cb.from_user.id]["planned_service"] = service
+    user_data[cb.from_user.id]["step"] = "planned_date"
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📅 Введіть бажану дату і місяць.\n\n"
+        "Наприклад: 30.04.2026",
+        nav_buttons("main")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("service_"))
+async def service_cb(cb: CallbackQuery):
+    key = cb.data.replace("service_", "")
+
+    if key not in SERVICES:
+        await cb.answer("Помилка вибору")
+        return
+
+    service, price = SERVICES[key]
+
+    if cb.from_user.id not in user_data:
+        user_data[cb.from_user.id] = {}
+
+    user_data[cb.from_user.id]["service"] = service
+    user_data[cb.from_user.id]["price"] = price
+    user_data[cb.from_user.id]["upsell"] = "без додаткового догляду"
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ Додати догляд (+200 грн)", callback_data="upsell_yes")
+    kb.button(text="➡️ Продовжити без змін", callback_data="upsell_no")
+    kb.button(text="🔙 Назад", callback_data="book_back")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "💎 Хочете ще кращий результат?\n\n"
+        "Можна додати догляд для більш мʼякого вигляду та довшого ефекту ✨",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "upsell_yes")
+async def upsell_yes(cb: CallbackQuery):
+    if cb.from_user.id not in user_data:
+        await cb.answer("Почніть запис заново")
+        return
+
+    user_data[cb.from_user.id]["upsell"] = "додатковий догляд"
+    user_data[cb.from_user.id]["price"] = user_data[cb.from_user.id].get("price", "") + " + 200 грн догляд"
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💎 Обрати VIP-запис (+200 грн)", callback_data="vip_yes")
+    kb.button(text="➡️ Продовжити без VIP", callback_data="vip_no")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "💎 VIP-запис\n\n"
+        "Для тих, хто цінує комфорт та гнучкість ✨\n\n"
+        "VIP відкриває додаткові слоти:\n"
+        "🌅 Ранок: 07:00, 07:30, 08:00, 08:30, 09:00\n"
+        "🌙 Вечір: 19:00, 19:30, 20:00\n\n"
+        "🔥 Пріоритет у підтвердженні\n"
+        "⚠️ Кількість VIP-місць на день обмежена\n\n"
+        "Оберіть формат запису:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "upsell_no")
+async def upsell_no(cb: CallbackQuery):
+    if cb.from_user.id not in user_data:
+        await cb.answer("Почніть запис заново")
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💎 Обрати VIP-запис (+200 грн)", callback_data="vip_yes")
+    kb.button(text="➡️ Продовжити без VIP", callback_data="vip_no")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "💎 VIP-запис\n\n"
+        "Для тих, хто цінує комфорт та гнучкість ✨\n\n"
+        "VIP відкриває додаткові слоти:\n"
+        "🌅 Ранок: 07:00, 07:30, 08:00, 08:30, 09:00\n"
+        "🌙 Вечір: 19:00, 19:30, 20:00\n\n"
+        "🔥 Пріоритет у підтвердженні\n"
+        "⚠️ Кількість VIP-місць на день обмежена\n\n"
+        "Оберіть формат запису:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "vip_yes")
+async def vip_yes(cb: CallbackQuery):
+    if cb.from_user.id not in user_data:
+        await cb.answer("Почніть запис заново")
+        return
+
+    user_data[cb.from_user.id]["vip"] = "VIP-пріоритет"
+    user_data[cb.from_user.id]["price"] = user_data[cb.from_user.id].get("price", "") + " + 200 грн VIP"
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📅 Оберіть дату\n\n"
+        "💎 Ви обрали VIP-запис. Вам будуть доступні ранкові та вечірні VIP-слоти.\n"
+        "🔥 Залишилось лише кілька вільних місць",
+        make_calendar("user")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "vip_no")
+async def vip_no(cb: CallbackQuery):
+    if cb.from_user.id not in user_data:
+        await cb.answer("Почніть запис заново")
+        return
+
+    user_data[cb.from_user.id]["vip"] = "звичайний запис"
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📅 Оберіть дату\n\n"
+        "🔥 Залишилось лише кілька вільних місць",
+        make_calendar("user")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("user_month_"))
+async def user_month(cb: CallbackQuery):
+    parts = cb.data.split("_")
+    year, month = int(parts[-2]), int(parts[-1])
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📅 Оберіть дату:",
+        make_calendar("user", year, month)
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("user_date_"))
+async def user_date(cb: CallbackQuery):
+    date = cb.data.replace("user_date_", "")
+
+    if is_user_vip(cb.from_user.id) and vip_limit_reached(date):
+        kb = InlineKeyboardBuilder()
+        kb.button(text="➡️ Продовжити як звичайний запис", callback_data=f"switch_regular_{date}")
+        kb.button(text="📅 Обрати іншу дату", callback_data="book_calendar")
+        kb.button(text="🏠 Головне меню", callback_data="main")
+        kb.adjust(1)
+
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "😔 VIP-місця на цю дату вже зайняті.\n\n"
+            "Ви можете обрати іншу дату для VIP або продовжити як звичайний запис на цю дату.",
+            kb.as_markup()
+        )
+        await cb.answer()
+        return
+
+    kb, rows = user_time_keyboard(date, cb.from_user.id)
+
+    if not rows:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "😔 На цю дату немає доступних вікон для вашого формату запису.\n\n"
+            "Спробуйте іншу дату або зверніться до майстра.",
+            make_calendar("user")
+        )
+        await cb.answer()
+        return
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📅 Дата: {date}\n\n"
+        "Оберіть зручний час нижче 👇\n"
+        "💎 — VIP-слоти, 🕒 — стандартні слоти",
+        kb
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("switch_regular_"))
+async def switch_regular_date(cb: CallbackQuery):
+    date = cb.data.replace("switch_regular_", "")
+
+    if cb.from_user.id not in user_data:
+        await cb.answer("Почніть запис заново", show_alert=True)
+        return
+
+    user_data[cb.from_user.id]["vip"] = "звичайний запис"
+
+    # Прибираємо VIP-доплату з ціни, якщо вона була додана
+    price = user_data[cb.from_user.id].get("price", "")
+    price = price.replace(" + 200 грн VIP", "")
+    user_data[cb.from_user.id]["price"] = price
+
+    kb, rows = user_time_keyboard(date, cb.from_user.id)
+
+    if not rows:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "😔 На цю дату немає доступних звичайних вікон.\n\n"
+            "Оберіть іншу дату.",
+            make_calendar("user")
+        )
+        await cb.answer()
+        return
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📅 Дата: {date}\n\n"
+        "Ви продовжуєте як звичайний запис.\n"
+        "Оберіть зручний час нижче 👇",
+        kb
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("user_time_"))
+async def user_time(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    data = cb.data.replace("user_time_", "")
+    date, time = data.rsplit("_", 1)
+
+    if user_id not in user_data:
+        await show_screen(
+            cb.message.chat.id,
+            user_id,
+            "Почніть запис заново через нижню панель.",
+            None
+        )
+        await cb.answer()
+        return
+
+    if is_vip_time(time) and not is_user_vip(user_id):
+        await show_screen(
+            cb.message.chat.id,
+            user_id,
+            "💎 Це VIP-слот.\n\n"
+            "Щоб обрати ранковий або вечірній VIP-час, потрібно вибрати VIP-запис.",
+            make_calendar("user")
+        )
+        await cb.answer()
+        return
+
+    if is_user_vip(user_id) and vip_limit_reached(date):
+        await show_screen(
+            cb.message.chat.id,
+            user_id,
+            "😔 VIP-місця на цю дату вже зайняті.\n\n"
+            "Оберіть іншу дату або поверніться до звичайного запису.",
+            make_calendar("user")
+        )
+        await cb.answer()
+        return
+
+    cur.execute("SELECT id FROM slots WHERE date=? AND time=? AND is_taken=0", (date, time))
+    if not cur.fetchone():
+        await show_screen(
+            cb.message.chat.id,
+            user_id,
+            "Цей час уже зайнятий. Оберіть інший.",
+            make_calendar("user")
+        )
+        await cb.answer()
+        return
+
+    user_data[user_id]["date"] = date
+    user_data[user_id]["time"] = time
+    user_data[user_id]["step"] = "receipt"
+
+    name = user_data[user_id]["name"]
+    service = user_data[user_id]["service"]
+    price = user_data[user_id]["price"]
+
+    await show_screen(
+        cb.message.chat.id,
+        user_id,
+        "💳 Для відправки заявки потрібна передоплата\n\n"
+        f"👤 Імʼя: {name}\n"
+        f"💅 Послуга: {service}\n"
+        f"💰 Вартість послуги: {price}\n"
+        f"💎 Додатково: {user_data[user_id].get('upsell', 'без додаткового догляду')}\n"
+        f"🔥 Пріоритет: {user_data[user_id].get('vip', 'звичайний запис')}\n"
+        f"📅 Дата: {date}\n"
+        f"🕒 Час: {time}\n"
+        "⏳ Тривалість резерву: мінімум 1 година\n\n"
+        f"💳 Сума передоплати: {PREPAY_AMOUNT}\n"
+        f"🏦 Картка: {CARD_NUMBER}\n"
+        f"👤 Отримувач: {CARD_NAME}\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "⚠️ ВАЖЛИВО!\n\n"
+        "✅ Заявка НЕ буде відправлена майстру автоматично.\n"
+        "Щоб заявка потрапила майстру, потрібно:\n\n"
+        "1️⃣ Внести передоплату\n"
+        "2️⃣ Надіслати сюди фото або скрин чека\n\n"
+        "📩 Тільки ПІСЛЯ відправки чека майстер отримає вашу заявку.\n"
+        "━━━━━━━━━━━━━━━━━━━━",
+        nav_buttons("book_calendar")
+    )
+    await cb.answer()
+
+
+# ===================== ПОРТФОЛІО =====================
+
+async def show_portfolio(chat_id, user_id):
+    cur.execute("SELECT id, file_id, caption FROM portfolio ORDER BY id DESC LIMIT 1")
+    row = cur.fetchone()
+
+    old = screen_msg.get(user_id)
+    if old:
+        try:
+            await bot.delete_message(chat_id, old)
+        except Exception:
+            pass
+
+    if not row:
+        msg = await bot.send_message(chat_id, "Портфоліо поки порожнє.")
+        screen_msg[user_id] = msg.message_id
+        return
+
+    photo_id, file_id, caption = row
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="💖 Хочу як на фото", callback_data="book_back")
+    kb.button(text="💖 Хочу як на фото", callback_data="book_back")
+    kb.button(text="➡️ Наступне фото", callback_data=f"portfolio_next_{photo_id}")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    msg = await bot.send_photo(
+        chat_id,
+        file_id,
+        caption=caption or "📸 Робота майстра",
+        reply_markup=kb.as_markup()
+    )
+    screen_msg[user_id] = msg.message_id
+
+
+@dp.callback_query(F.data == "portfolio")
+async def portfolio_cb(cb: CallbackQuery):
+    await show_portfolio(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("portfolio_next_"))
+async def portfolio_next(cb: CallbackQuery):
+    current_id = int(cb.data.replace("portfolio_next_", ""))
+
+    cur.execute(
+        "SELECT id, file_id, caption FROM portfolio WHERE id < ? ORDER BY id DESC LIMIT 1",
+        (current_id,)
+    )
+    row = cur.fetchone()
+
+    if not row:
+        cur.execute("SELECT id, file_id, caption FROM portfolio ORDER BY id DESC LIMIT 1")
+        row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Портфоліо порожнє")
+        return
+
+    photo_id, file_id, caption = row
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➡️ Наступне фото", callback_data=f"portfolio_next_{photo_id}")
+    kb.button(text="🏠 Головне меню", callback_data="main")
+    kb.adjust(1)
+
+    try:
+        await cb.message.edit_media(
+            InputMediaPhoto(media=file_id, caption=caption or "📸 Робота майстра"),
+            reply_markup=kb.as_markup()
+        )
+    except Exception:
+        pass
+
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "portfolio_admin")
+async def portfolio_admin(cb: CallbackQuery):
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📸 Керування портфоліо:",
+        portfolio_admin_menu()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "portfolio_add")
+async def portfolio_add(cb: CallbackQuery):
+    user_data[cb.from_user.id] = {"step": "portfolio_add_photo"}
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📸 Надішліть фото для портфоліо.\n\n"
+        "Можете додати підпис до фото.",
+        nav_buttons("portfolio_admin")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "portfolio_delete")
+async def portfolio_delete(cb: CallbackQuery):
+    cur.execute("SELECT id, caption FROM portfolio ORDER BY id DESC")
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "У портфоліо немає фото.",
+            portfolio_admin_menu()
+        )
+        await cb.answer()
+        return
+
+    kb = InlineKeyboardBuilder()
+    for photo_id, caption in rows:
+        title = caption if caption else f"Фото #{photo_id}"
+        kb.button(text=f"🗑 {title}", callback_data=f"portfolio_del_{photo_id}")
+
+    kb.button(text="🔙 Назад", callback_data="portfolio_admin")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "Оберіть фото для видалення:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("portfolio_del_"))
+async def portfolio_del(cb: CallbackQuery):
+    photo_id = int(cb.data.replace("portfolio_del_", ""))
+
+    cur.execute("DELETE FROM portfolio WHERE id=?", (photo_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "✅ Фото видалено.",
+        portfolio_admin_menu()
+    )
+    await cb.answer()
+
+
+# ===================== КУРС =====================
+
+async def start_client_review(chat_id, user_id):
+    """
+    Клієнт може залишити відгук після того, як у нього була заявка/запис.
+    """
+    cur.execute("""
+    SELECT id FROM bookings
+    WHERE user_id=? AND status IN ('✅ Підтверджено', '⏳ Очікує підтвердження')
+    ORDER BY id DESC
+    LIMIT 1
+    """, (user_id,))
+    booking = cur.fetchone()
+
+    if not booking:
+        await show_screen(
+            chat_id,
+            user_id,
+            "⭐ Залишити відгук\n\n"
+            "Відгук можна залишити після запису або заявки на процедуру.\n\n"
+            "Якщо ви вже були у майстра, але бот не бачить запис — звʼяжіться з майстром.",
+            nav_buttons("main")
+        )
+        return
+
+    user_data[user_id] = {"step": "client_review"}
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "⭐ Залишити відгук\n\n"
+        "Напишіть ваш відгук повідомленням нижче або надішліть фото з підписом.\n\n"
+        "Дякуємо за вашу довіру 💖",
+        nav_buttons("main")
+    )
+
+
+
+@dp.callback_query(F.data == "reviews_admin")
+async def reviews_admin(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу")
+        return
+    await show_screen(cb.message.chat.id, cb.from_user.id, "⭐ Керування відгуками:", reviews_admin_menu())
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "review_add")
+async def review_add(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу")
+        return
+    user_data[cb.from_user.id] = {"step": "review_add"}
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "⭐ Надішліть фото відгуку або просто текст відгуку.\n\n"
+        "Якщо надсилаєте фото — підпис до фото буде текстом відгуку.",
+        nav_buttons("reviews_admin")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "reviews_view")
+async def reviews_view(cb: CallbackQuery):
+    await show_reviews(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "review_delete")
+async def review_delete(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу")
+        return
+
+    cur.execute("SELECT id, text FROM reviews ORDER BY id DESC")
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(cb.message.chat.id, cb.from_user.id, "Відгуків поки немає.", reviews_admin_menu())
+        await cb.answer()
+        return
+
+    kb = InlineKeyboardBuilder()
+    for review_id, text in rows:
+        title = (text or f"Відгук #{review_id}")[:40]
+        kb.button(text=f"🗑 {title}", callback_data=f"review_del_{review_id}")
+    kb.button(text="🔙 Назад", callback_data="reviews_admin")
+    kb.adjust(1)
+
+    await show_screen(cb.message.chat.id, cb.from_user.id, "Оберіть відгук для видалення:", kb.as_markup())
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("review_del_"))
+async def review_del(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу")
+        return
+
+    review_id = int(cb.data.replace("review_del_", ""))
+    cur.execute("DELETE FROM reviews WHERE id=?", (review_id,))
+    conn.commit()
+
+    await show_screen(cb.message.chat.id, cb.from_user.id, "✅ Відгук видалено.", reviews_admin_menu())
+    await cb.answer()
+
+
+async def show_reviews(chat_id, user_id):
+    cur.execute("SELECT file_id, text FROM reviews ORDER BY id DESC LIMIT 5")
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(
+            chat_id,
+            user_id,
+            "⭐ Відгуки клієнтів\n\n"
+            "💬 «Дуже задоволена результатом, брови виглядають акуратно й натурально!»\n\n"
+            "💬 «Майстер дуже уважна до деталей, усе комфортно і красиво»\n\n"
+            "💬 «Після ламінування погляд став набагато виразнішим. Рекомендую!»\n\n"
+            "Хочете такий самий результат? Натисніть «🌸 Записатися».\n\nЩоб залишити свій відгук — натисніть «⭐ Залишити відгук» на нижній панелі.",
+            nav_buttons("main")
+        )
+        return
+
+    text_reviews = []
+    sent_photo = False
+
+    for file_id, text in rows:
+        if file_id and not sent_photo:
+            old = screen_msg.get(user_id)
+            if old:
+                try:
+                    await bot.delete_message(chat_id, old)
+                except Exception:
+                    pass
+
+            kb = InlineKeyboardBuilder()
+            kb.button(text="🌸 Записатися", callback_data="book_back")
+            kb.button(text="🏠 Головне меню", callback_data="main")
+            kb.adjust(1)
+
+            msg = await bot.send_photo(
+                chat_id,
+                file_id,
+                caption=text or "⭐ Відгук клієнта",
+                reply_markup=kb.as_markup()
+            )
+            screen_msg[user_id] = msg.message_id
+            sent_photo = True
+        else:
+            text_reviews.append(f"💬 {text or 'Відгук клієнта'}")
+
+    if not sent_photo:
+        await show_screen(
+            chat_id,
+            user_id,
+            "⭐ Відгуки клієнтів\n\n" + "\n\n".join(text_reviews),
+            nav_buttons("main")
+        )
+
+
+async def show_course(chat_id, user_id):
+    cur.execute("""
+    INSERT INTO course_funnel (user_id, viewed_at, reminder_sent)
+    VALUES (?, ?, 0)
+    ON CONFLICT(user_id) DO UPDATE SET viewed_at=excluded.viewed_at, reminder_sent=0
+    """, (user_id, datetime.now().isoformat()))
+    conn.commit()
+
+    await show_screen(
+        chat_id,
+        user_id,
+        f"🎓 Курс «{COURSE_NAME}»\n\n"
+        "Навчання для тих, хто хоче почати працювати у beauty-сфері.\n\n"
+        "На курсі ви навчитеся:\n"
+        "• підбирати форму брів\n"
+        "• працювати з фарбуванням\n"
+        "• робити ламінування\n"
+        "• спілкуватися з клієнтами\n"
+        "• стартувати як майстер\n\n"
+        "Оберіть потрібний пункт:",
+        course_menu()
+    )
+
+
+@dp.callback_query(F.data == "course")
+async def course_cb(cb: CallbackQuery):
+    await show_course(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "course_program")
+async def course_program(cb: CallbackQuery):
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📋 Програма курсу:\n\n"
+        "1. Знайомство з матеріалами\n"
+        "2. Архітектура брів\n"
+        "3. Фарбування та підбір відтінку\n"
+        "4. Ламінування брів\n"
+        "5. Робота з клієнтом\n"
+        "6. Помилки початківців\n"
+        "7. Як знайти перших клієнтів",
+        nav_buttons("course")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "course_price")
+async def course_price(cb: CallbackQuery):
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "💰 Вартість навчання:\n\n"
+        f"Курс: {COURSE_NAME}\n"
+        f"Ціна: {COURSE_PRICE}\n\n"
+        "Щоб залишити заявку, натисніть «💬 Хочу на курс».",
+        course_menu()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "course_apply")
+async def course_apply(cb: CallbackQuery):
+    user_data[cb.from_user.id] = {"step": "course_name"}
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🎓 Заявка на курс\n\n"
+        "Введіть ваше імʼя:",
+        nav_buttons("course")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("course_format_"))
+async def course_format(cb: CallbackQuery):
+    user_id = cb.from_user.id
+    form_key = cb.data.replace("course_format_", "")
+
+    formats = {
+        "online": "Онлайн",
+        "offline": "Офлайн",
+        "unknown": "Ще не знаю"
+    }
+
+    form = formats.get(form_key, "Не вказано")
+    name = user_data[user_id]["course_name"]
+    phone = user_data[user_id]["course_phone"]
+    username = cb.from_user.username or "без username"
+
+    cur.execute("""
+    INSERT INTO course_leads (user_id, name, phone, format, username)
+    VALUES (?, ?, ?, ?, ?)
+    """, (user_id, name, phone, form, username))
+    conn.commit()
+
+    await bot.send_message(
+        ADMIN_ID,
+        "🎓 Нова заявка на курс!\n\n"
+        f"👤 Імʼя: {name}\n"
+        f"📱 Телефон: {phone}\n"
+        f"📚 Формат: {form}\n"
+        f"Telegram: @{username}"
+    )
+
+    user_data.pop(user_id, None)
+
+    await show_screen(
+        cb.message.chat.id,
+        user_id,
+        "✅ Заявку на курс відправлено!\n\n"
+        "Майстер звʼяжеться з вами.",
+        None
+    )
+    await cb.answer()
+
+
+# ===================== КОНТАКТИ =====================
+
+async def show_contact(chat_id, user_id):
+    await show_screen(
+        chat_id,
+        user_id,
+        "💬 Звʼязатися з майстром:\n\n"
+        f"Telegram: {MASTER_USERNAME}\n"
+        f"Instagram: {MASTER_INSTAGRAM}",
+        nav_buttons("main")
+    )
+
+
+# ===================== АДМІНКА =====================
+
+@dp.callback_query(F.data == "admin_panel")
+async def admin_panel(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу")
+        return
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "👑 Адмін-панель:",
+        admin_menu()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "admin_add_slots")
+async def admin_add_slots(cb: CallbackQuery):
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "➕ Оберіть дату:",
+        make_calendar("admin_add")
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_add_month_"))
+async def admin_add_month(cb: CallbackQuery):
+    parts = cb.data.split("_")
+    year, month = int(parts[-2]), int(parts[-1])
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "➕ Оберіть дату:",
+        make_calendar("admin_add", year, month)
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("admin_add_date_"))
+async def admin_add_date(cb: CallbackQuery):
+    date = cb.data.replace("admin_add_date_", "")
+
+    user_data[cb.from_user.id] = {"selected_times": []}
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📅 Дата: {date}\n\n"
+        "Оберіть одне або кілька вільних вікон:",
+        multi_time_keyboard(date, [])
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("toggle_time_"))
+async def toggle_time(cb: CallbackQuery):
+    data = cb.data.replace("toggle_time_", "")
+    date, time = data.rsplit("_", 1)
+
+    if cb.from_user.id not in user_data:
+        user_data[cb.from_user.id] = {"selected_times": []}
+
+    selected = user_data[cb.from_user.id].get("selected_times", [])
+
+    if time in selected:
+        selected.remove(time)
+    else:
+        selected.append(time)
+
+    user_data[cb.from_user.id]["selected_times"] = selected
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📅 Дата: {date}\n\n"
+        f"Вибрано вікон: {len(selected)}\n\n"
+        "Натисніть на час, щоб вибрати або прибрати:",
+        multi_time_keyboard(date, selected)
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("save_times_"))
+async def save_times(cb: CallbackQuery):
+    date = cb.data.replace("save_times_", "")
+    selected = user_data.get(cb.from_user.id, {}).get("selected_times", [])
+
+    if not selected:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "Ви не вибрали жодного часу.",
+            admin_menu()
+        )
+        await cb.answer()
+        return
+
+    added_times = []
+    skipped = 0
+
+    for time in selected:
+        cur.execute("SELECT id FROM slots WHERE date=? AND time=?", (date, time))
+        if cur.fetchone():
+            skipped += 1
+        else:
+            cur.execute(
+                "INSERT INTO slots (date, time, is_taken) VALUES (?, ?, 0)",
+                (date, time)
+            )
+            added_times.append(time)
+
+    conn.commit()
+    user_data.pop(cb.from_user.id, None)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "✅ Готово!\n\n"
+        f"📅 Дата: {date}\n"
+        f"➕ Додано вікон: {len(added_times)}\n"
+        f"⚠️ Уже були в базі: {skipped}",
+        admin_menu()
+    )
+
+    if added_times:
+        await notify_today_slots(date, added_times)
+
+    await cb.answer()
+
+
+# ===================== АДМІНКА: АКУРАТНІ СПИСКИ / СТОВПЧИКИ =====================
+
+ADMIN_PAGE_SIZE = 8
+
+
+def page_slice(rows, page: int, size: int = ADMIN_PAGE_SIZE):
+    page = max(page, 0)
+    start_i = page * size
+    end_i = start_i + size
+    return rows[start_i:end_i], page
+
+
+def admin_pagination_buttons(kb, prefix: str, page: int, total: int, size: int = ADMIN_PAGE_SIZE):
+    nav = []
+    if page > 0:
+        nav.append((f"⬅️ Стор. {page}", f"{prefix}_{page - 1}"))
+    if (page + 1) * size < total:
+        nav.append((f"➡️ Стор. {page + 2}", f"{prefix}_{page + 1}"))
+
+    for text, cb_data in nav:
+        kb.button(text=text, callback_data=cb_data)
+
+    return len(nav)
+
+
+# ---------- Вільні вікна ----------
+
+@dp.callback_query(F.data == "admin_free_slots")
+async def admin_free_slots(cb: CallbackQuery):
+    cur.execute("SELECT DISTINCT date FROM slots WHERE is_taken=0 ORDER BY date")
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "📅 Вільних вікон поки немає.",
+            admin_menu()
+        )
+        await cb.answer()
+        return
+
+    kb = InlineKeyboardBuilder()
+    for (date,) in rows:
+        cur.execute("SELECT COUNT(*) FROM slots WHERE date=? AND is_taken=0", (date,))
+        count = cur.fetchone()[0]
+        kb.button(text=f"📅 {date}  •  {count} вікон", callback_data=f"free_date_{date}")
+
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(2, 2, 2, 1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "📅 Вільні вікна\n\n"
+        "Оберіть дату, щоб побачити години:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("free_date_"))
+async def admin_free_date(cb: CallbackQuery):
+    date = cb.data.replace("free_date_", "")
+
+    cur.execute("SELECT id, time FROM slots WHERE date=? AND is_taken=0 ORDER BY time", (date,))
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            f"📅 {date}\n\nНа цю дату вільних вікон немає.",
+            nav_buttons("admin_free_slots")
+        )
+        await cb.answer()
+        return
+
+    vip_rows = [(slot_id, time) for slot_id, time in rows if is_vip_time(time)]
+    normal_rows = [(slot_id, time) for slot_id, time in rows if not is_vip_time(time)]
+
+    kb = InlineKeyboardBuilder()
+    layout = []
+
+    def add_time_section(title, section_rows, icon):
+        if not section_rows:
+            return
+
+        kb.button(text=title, callback_data="none")
+        layout.append(1)
+
+        for slot_id, time in section_rows:
+            kb.button(text=f"{icon} {time}", callback_data=f"slot_manage_{slot_id}")
+
+        for i in range(0, len(section_rows), 4):
+            layout.append(min(4, len(section_rows) - i))
+
+    add_time_section("💎 VIP-вікна", vip_rows, "💎")
+    add_time_section("🕒 Звичайні вікна", normal_rows, "🕒")
+
+    kb.button(text="🧺 Вибрати кілька для видалення", callback_data=f"slots_select_{date}")
+    kb.button(text="🔙 До дат", callback_data="admin_free_slots")
+    kb.button(text="🏠 Адмін-панель", callback_data="admin_panel")
+    layout.extend([1, 1, 1])
+
+    kb.adjust(*layout)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📅 {date}\n\n"
+        "Вікна розділені по блоках. Натисніть на час, щоб керувати ним:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "admin_delete_slot")
+async def admin_delete_slot(cb: CallbackQuery):
+    # Стару кнопку залишаємо, але ведемо в акуратний список дат.
+    await admin_free_slots(cb)
+
+
+
+@dp.callback_query(F.data.startswith("slots_select_"))
+async def slots_select(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    date = cb.data.replace("slots_select_", "")
+    admin_selected_slots[cb.from_user.id] = set()
+
+    await show_slots_select_page(cb.message.chat.id, cb.from_user.id, date)
+    await cb.answer()
+
+
+async def show_slots_select_page(chat_id, user_id, date: str):
+    cur.execute("SELECT id, time FROM slots WHERE date=? AND is_taken=0 ORDER BY time", (date,))
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(
+            chat_id,
+            user_id,
+            f"📅 {date}\n\nВільних вікон для видалення немає.",
+            nav_buttons("admin_free_slots")
+        )
+        return
+
+    selected = admin_selected_slots.setdefault(user_id, set())
+
+    vip_rows = [(slot_id, time) for slot_id, time in rows if is_vip_time(time)]
+    normal_rows = [(slot_id, time) for slot_id, time in rows if not is_vip_time(time)]
+
+    kb = InlineKeyboardBuilder()
+    layout = []
+
+    def add_section(title, section_rows, icon):
+        if not section_rows:
+            return
+
+        kb.button(text=title, callback_data="none")
+        layout.append(1)
+
+        for slot_id, time in section_rows:
+            mark = "✅" if slot_id in selected else "⬜️"
+            kb.button(text=f"{mark} {icon} {time}", callback_data=f"slot_toggle_{date}_{slot_id}")
+
+        for i in range(0, len(section_rows), 4):
+            layout.append(min(4, len(section_rows) - i))
+
+    add_section("💎 VIP-вікна", vip_rows, "💎")
+    add_section("🕒 Звичайні вікна", normal_rows, "🕒")
+
+    kb.button(text="🧹 Вибрати всі", callback_data=f"slot_select_all_{date}")
+    kb.button(text="❌ Очистити вибір", callback_data=f"slot_select_clear_{date}")
+    kb.button(text=f"🗑 Видалити вибрані ({len(selected)})", callback_data=f"slot_delete_selected_warn_{date}")
+    kb.button(text="🔙 До годин", callback_data=f"free_date_{date}")
+    kb.button(text="🏠 Адмін-панель", callback_data="admin_panel")
+    layout.extend([1, 1, 1, 1, 1])
+
+    kb.adjust(*layout)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        f"🧺 Масове видалення вікон\n\n"
+        f"📅 Дата: {date}\n"
+        f"Вибрано: {len(selected)}\n\n"
+        "Натисніть на потрібні години:",
+        kb.as_markup()
+    )
+
+
+@dp.callback_query(F.data.startswith("slot_toggle_"))
+async def slot_toggle(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("slot_toggle_", "")
+    date, slot_id = data.rsplit("_", 1)
+    slot_id = int(slot_id)
+
+    selected = admin_selected_slots.setdefault(cb.from_user.id, set())
+
+    if slot_id in selected:
+        selected.remove(slot_id)
+    else:
+        selected.add(slot_id)
+
+    await show_slots_select_page(cb.message.chat.id, cb.from_user.id, date)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("slot_select_all_"))
+async def slot_select_all(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    date = cb.data.replace("slot_select_all_", "")
+
+    cur.execute("SELECT id FROM slots WHERE date=? AND is_taken=0", (date,))
+    rows = cur.fetchall()
+
+    selected = admin_selected_slots.setdefault(cb.from_user.id, set())
+    for (slot_id,) in rows:
+        selected.add(slot_id)
+
+    await show_slots_select_page(cb.message.chat.id, cb.from_user.id, date)
+    await cb.answer("Усі вільні вікна вибрано")
+
+
+@dp.callback_query(F.data.startswith("slot_select_clear_"))
+async def slot_select_clear(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    date = cb.data.replace("slot_select_clear_", "")
+    admin_selected_slots[cb.from_user.id] = set()
+
+    await show_slots_select_page(cb.message.chat.id, cb.from_user.id, date)
+    await cb.answer("Вибір очищено")
+
+
+@dp.callback_query(F.data.startswith("slot_delete_selected_warn_"))
+async def slot_delete_selected_warn(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    date = cb.data.replace("slot_delete_selected_warn_", "")
+    selected = admin_selected_slots.get(cb.from_user.id, set())
+
+    if not selected:
+        await cb.answer("Спочатку виберіть години", show_alert=True)
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"🗑 Так, видалити {len(selected)} вікон", callback_data=f"slot_delete_selected_do_{date}")
+    kb.button(text="🔙 Назад до вибору", callback_data=f"slots_select_{date}")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "⚠️ Підтвердження видалення\n\n"
+        f"📅 Дата: {date}\n"
+        f"Вибрано вікон: {len(selected)}\n\n"
+        "Видалити вибрані години назавжди?",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("slot_delete_selected_do_"))
+async def slot_delete_selected_do(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    date = cb.data.replace("slot_delete_selected_do_", "")
+    selected = admin_selected_slots.get(cb.from_user.id, set())
+
+    if not selected:
+        await cb.answer("Нічого не вибрано", show_alert=True)
+        return
+
+    count = 0
+    for slot_id in list(selected):
+        cur.execute("DELETE FROM slots WHERE id=? AND is_taken=0", (slot_id,))
+        count += cur.rowcount
+
+    conn.commit()
+    admin_selected_slots[cb.from_user.id] = set()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"🗑 Видалено вікон: {count}\n\n"
+        "Вибрані години більше не будуть показуватися клієнтам.",
+        nav_buttons(f"free_date_{date}")
+    )
+    await cb.answer("Видалено")
+
+
+@dp.callback_query(F.data.startswith("slot_manage_"))
+async def slot_manage(cb: CallbackQuery):
+    slot_id = int(cb.data.replace("slot_manage_", ""))
+
+    cur.execute("SELECT date, time, is_taken FROM slots WHERE id=?", (slot_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Вікно не знайдено", show_alert=True)
+        return
+
+    date, time, is_taken = row
+
+    kb = InlineKeyboardBuilder()
+    if is_taken == 0:
+        kb.button(text="🚫 Закрити вікно", callback_data=f"slot_close_{slot_id}")
+    else:
+        kb.button(text="✅ Відкрити вікно", callback_data=f"slot_open_{slot_id}")
+    kb.button(text="🗑 Видалити вікно", callback_data=f"delete_slot_{slot_id}")
+    kb.button(text="🔙 Назад до годин", callback_data=f"free_date_{date}")
+    kb.button(text="🏠 Адмін-панель", callback_data="admin_panel")
+    kb.adjust(1)
+
+    status = "вільне" if is_taken == 0 else "закрите/зайняте"
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"🕒 Керування вікном\n\n"
+        f"📅 Дата: {date}\n"
+        f"🕒 Час: {time}\n"
+        f"📌 Статус: {status}",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("slot_close_"))
+async def slot_close(cb: CallbackQuery):
+    slot_id = int(cb.data.replace("slot_close_", ""))
+
+    cur.execute("SELECT date FROM slots WHERE id=?", (slot_id,))
+    row = cur.fetchone()
+    if not row:
+        await cb.answer("Вікно не знайдено", show_alert=True)
+        return
+
+    date = row[0]
+    cur.execute("UPDATE slots SET is_taken=1 WHERE id=?", (slot_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🚫 Вікно закрито.\n\n"
+        "Клієнти більше не побачать цей час.",
+        nav_buttons(f"free_date_{date}")
+    )
+    await cb.answer("Закрито")
+
+
+@dp.callback_query(F.data.startswith("slot_open_"))
+async def slot_open(cb: CallbackQuery):
+    slot_id = int(cb.data.replace("slot_open_", ""))
+
+    cur.execute("SELECT date FROM slots WHERE id=?", (slot_id,))
+    row = cur.fetchone()
+    if not row:
+        await cb.answer("Вікно не знайдено", show_alert=True)
+        return
+
+    date = row[0]
+    cur.execute("UPDATE slots SET is_taken=0 WHERE id=?", (slot_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "✅ Вікно знову відкрите.",
+        nav_buttons(f"free_date_{date}")
+    )
+    await cb.answer("Відкрито")
+
+
+@dp.callback_query(F.data.startswith("delete_slot_"))
+async def delete_slot(cb: CallbackQuery):
+    slot_id = int(cb.data.replace("delete_slot_", ""))
+
+    cur.execute("SELECT date FROM slots WHERE id=?", (slot_id,))
+    row = cur.fetchone()
+    date = row[0] if row else None
+
+    cur.execute("DELETE FROM slots WHERE id=?", (slot_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🗑 Вікно видалено.",
+        nav_buttons(f"free_date_{date}" if date else "admin_panel")
+    )
+    await cb.answer("Видалено")
+
+
+# ---------- Записи ----------
+
+@dp.callback_query(F.data == "admin_all_bookings")
+async def admin_all_bookings(cb: CallbackQuery):
+    await show_bookings_categories(cb.message.chat.id, cb.from_user.id)
+    await cb.answer()
+
+
+async def show_bookings_categories(chat_id, user_id):
+    cur.execute("SELECT COUNT(*) FROM bookings WHERE status='✅ Підтверджено'")
+    active_count = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM bookings WHERE status LIKE '%Очікує%'")
+    waiting_count = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM bookings WHERE status='✅ Завершено'")
+    done_count = cur.fetchone()[0]
+
+    cur.execute("SELECT COUNT(*) FROM bookings WHERE status LIKE '❌%'")
+    cancelled_count = cur.fetchone()[0]
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"✅ Активні записи • {active_count}", callback_data="bookings_filter_active_0")
+    kb.button(text=f"⏳ В очікуванні • {waiting_count}", callback_data="bookings_filter_waiting_0")
+    kb.button(text=f"🏁 Виконані • {done_count}", callback_data="bookings_filter_done_0")
+    kb.button(text=f"❌ Скасовані / відхилені • {cancelled_count}", callback_data="bookings_filter_cancelled_0")
+    kb.button(text="📋 Усі записи", callback_data="bookings_filter_all_0")
+    kb.button(text="🧹 Видалити старі скасовані", callback_data="bookings_clean_old")
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        "📋 Записи клієнтів\n\n"
+        "Оберіть розділ:",
+        kb.as_markup()
+    )
+
+
+@dp.callback_query(F.data.startswith("bookings_filter_"))
+async def bookings_filter(cb: CallbackQuery):
+    data = cb.data.replace("bookings_filter_", "")
+    filter_name, page = data.rsplit("_", 1)
+    await show_bookings_page(cb.message.chat.id, cb.from_user.id, filter_name, int(page))
+    await cb.answer()
+
+
+async def show_bookings_page(chat_id, user_id, filter_name: str = "all", page: int = 0):
+    where = ""
+    params = ()
+
+    titles = {
+        "active": "✅ Активні записи",
+        "waiting": "⏳ Записи в очікуванні",
+        "done": "🏁 Виконані записи",
+        "cancelled": "❌ Скасовані / відхилені записи",
+        "all": "📋 Усі записи",
+    }
+
+    if filter_name == "active":
+        where = "WHERE status='✅ Підтверджено'"
+    elif filter_name == "waiting":
+        where = "WHERE status LIKE '%Очікує%'"
+    elif filter_name == "done":
+        where = "WHERE status='✅ Завершено'"
+    elif filter_name == "cancelled":
+        where = "WHERE status LIKE '❌%'"
+
+    cur.execute(f"""
+    SELECT id, name, service, date, time, status
+    FROM bookings
+    {where}
+    ORDER BY id DESC
+    """, params)
+    rows = cur.fetchall()
+
+    title = titles.get(filter_name, "📋 Записи")
+
+    if not rows:
+        await show_screen(
+            chat_id,
+            user_id,
+            f"{title}\n\nУ цьому розділі поки немає записів.",
+            nav_buttons("admin_all_bookings")
+        )
+        return
+
+    part, page = page_slice(rows, page)
+
+    kb = InlineKeyboardBuilder()
+    for booking_id, name, service, date, time, status in part:
+        if status == "✅ Підтверджено":
+            icon = "✅"
+        elif status == "✅ Завершено":
+            icon = "🏁"
+        elif "Очікує" in status:
+            icon = "⏳"
+        elif status.startswith("❌"):
+            icon = "❌"
+        else:
+            icon = "📌"
+
+        kb.button(
+            text=f"{icon} #{booking_id} • {name} • {date} {time}",
+            callback_data=f"booking_manage_{booking_id}"
+        )
+
+    nav_count = admin_pagination_buttons(kb, f"bookings_filter_{filter_name}", page, len(rows))
+    kb.button(text="🧺 Вибрати кілька для видалення", callback_data=f"bookings_select_{filter_name}_0")
+    kb.button(text="🔙 До розділів", callback_data="admin_all_bookings")
+    kb.button(text="🏠 Адмін-панель", callback_data="admin_panel")
+
+    if nav_count:
+        kb.adjust(1, 1, 1, 1, 1, 1, 1, 1, nav_count, 1, 1, 1)
+    else:
+        kb.adjust(1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        f"{title}\n\n"
+        f"Сторінка: {page + 1}\n"
+        "Натисніть на запис для керування або виберіть кілька для видалення:",
+        kb.as_markup()
+    )
+
+
+
+@dp.callback_query(F.data.startswith("bookings_select_"))
+async def bookings_select(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("bookings_select_", "")
+    filter_name, page = data.rsplit("_", 1)
+    page = int(page)
+
+    admin_selected_bookings[cb.from_user.id] = set()
+    await show_bookings_select_page(cb.message.chat.id, cb.from_user.id, filter_name, page)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("bookings_select_page_"))
+async def bookings_select_page(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("bookings_select_page_", "")
+    filter_name, page = data.rsplit("_", 1)
+
+    await show_bookings_select_page(cb.message.chat.id, cb.from_user.id, filter_name, int(page))
+    await cb.answer()
+
+
+async def show_bookings_select_page(chat_id, user_id, filter_name: str = "all", page: int = 0):
+    where = ""
+
+    titles = {
+        "active": "✅ Активні записи",
+        "waiting": "⏳ Записи в очікуванні",
+        "done": "🏁 Виконані записи",
+        "cancelled": "❌ Скасовані / відхилені записи",
+        "all": "📋 Усі записи",
+    }
+
+    if filter_name == "active":
+        where = "WHERE status='✅ Підтверджено'"
+    elif filter_name == "waiting":
+        where = "WHERE status LIKE '%Очікує%'"
+    elif filter_name == "done":
+        where = "WHERE status='✅ Завершено'"
+    elif filter_name == "cancelled":
+        where = "WHERE status LIKE '❌%'"
+
+    cur.execute(f"""
+    SELECT id, name, service, date, time, status
+    FROM bookings
+    {where}
+    ORDER BY id DESC
+    """)
+    rows = cur.fetchall()
+
+    selected = admin_selected_bookings.setdefault(user_id, set())
+
+    if not rows:
+        await show_screen(chat_id, user_id, "У цьому розділі записів немає.", nav_buttons("admin_all_bookings"))
+        return
+
+    part, page = page_slice(rows, page)
+
+    kb = InlineKeyboardBuilder()
+    for booking_id, name, service, date, time, status in part:
+        mark = "✅" if booking_id in selected else "⬜️"
+        if status == "✅ Підтверджено":
+            icon = "🟢"
+        elif status == "✅ Завершено":
+            icon = "🏁"
+        elif "Очікує" in status:
+            icon = "🟡"
+        elif status.startswith("❌"):
+            icon = "🔴"
+        else:
+            icon = "📌"
+
+        kb.button(
+            text=f"{mark} {icon} #{booking_id} • {name} • {date} {time}",
+            callback_data=f"booking_toggle_{filter_name}_{page}_{booking_id}"
+        )
+
+    nav_count = admin_pagination_buttons(kb, f"bookings_select_page_{filter_name}", page, len(rows))
+    kb.button(text=f"🗑 Видалити вибрані ({len(selected)})", callback_data=f"booking_delete_selected_warn_{filter_name}_{page}")
+    kb.button(text="🧹 Вибрати всі на сторінці", callback_data=f"booking_select_page_all_{filter_name}_{page}")
+    kb.button(text="❌ Очистити вибір", callback_data=f"booking_select_clear_{filter_name}_{page}")
+    kb.button(text="🔙 До списку", callback_data=f"bookings_filter_{filter_name}_{page}")
+    kb.button(text="🏠 Адмін-панель", callback_data="admin_panel")
+
+    if nav_count:
+        kb.adjust(1, 1, 1, 1, 1, 1, 1, 1, nav_count, 1, 1, 1, 1, 1)
+    else:
+        kb.adjust(1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        f"🧺 Видалення кількох записів\n\n"
+        f"Розділ: {titles.get(filter_name, 'Записи')}\n"
+        f"Сторінка: {page + 1}\n"
+        f"Вибрано: {len(selected)}\n\n"
+        "Натисніть на записи, які потрібно видалити:",
+        kb.as_markup()
+    )
+
+
+@dp.callback_query(F.data.startswith("booking_toggle_"))
+async def booking_toggle(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("booking_toggle_", "")
+    filter_name, page, booking_id = data.rsplit("_", 2)
+    page = int(page)
+    booking_id = int(booking_id)
+
+    selected = admin_selected_bookings.setdefault(cb.from_user.id, set())
+
+    if booking_id in selected:
+        selected.remove(booking_id)
+    else:
+        selected.add(booking_id)
+
+    await show_bookings_select_page(cb.message.chat.id, cb.from_user.id, filter_name, page)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("booking_select_page_all_"))
+async def booking_select_page_all(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("booking_select_page_all_", "")
+    filter_name, page = data.rsplit("_", 1)
+    page = int(page)
+
+    where = ""
+    if filter_name == "active":
+        where = "WHERE status='✅ Підтверджено'"
+    elif filter_name == "waiting":
+        where = "WHERE status LIKE '%Очікує%'"
+    elif filter_name == "done":
+        where = "WHERE status='✅ Завершено'"
+    elif filter_name == "cancelled":
+        where = "WHERE status LIKE '❌%'"
+
+    cur.execute(f"""
+    SELECT id
+    FROM bookings
+    {where}
+    ORDER BY id DESC
+    """)
+    rows = cur.fetchall()
+    part, page = page_slice(rows, page)
+
+    selected = admin_selected_bookings.setdefault(cb.from_user.id, set())
+    for (booking_id,) in part:
+        selected.add(booking_id)
+
+    await show_bookings_select_page(cb.message.chat.id, cb.from_user.id, filter_name, page)
+    await cb.answer("Сторінку вибрано")
+
+
+@dp.callback_query(F.data.startswith("booking_select_clear_"))
+async def booking_select_clear(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("booking_select_clear_", "")
+    filter_name, page = data.rsplit("_", 1)
+
+    admin_selected_bookings[cb.from_user.id] = set()
+
+    await show_bookings_select_page(cb.message.chat.id, cb.from_user.id, filter_name, int(page))
+    await cb.answer("Вибір очищено")
+
+
+@dp.callback_query(F.data.startswith("booking_delete_selected_warn_"))
+async def booking_delete_selected_warn(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    data = cb.data.replace("booking_delete_selected_warn_", "")
+    filter_name, page = data.rsplit("_", 1)
+    selected = admin_selected_bookings.get(cb.from_user.id, set())
+
+    if not selected:
+        await cb.answer("Спочатку виберіть записи", show_alert=True)
+        return
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text=f"🗑 Так, видалити {len(selected)} записів", callback_data=f"booking_delete_selected_do_{filter_name}_{page}")
+    kb.button(text="🔙 Назад до вибору", callback_data=f"bookings_select_page_{filter_name}_{page}")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "⚠️ Підтвердження видалення\n\n"
+        f"Ви вибрали записів: {len(selected)}\n\n"
+        "Це видалить записи з бази. Якщо у записів були заблоковані вікна — вони будуть звільнені.",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("booking_delete_selected_do_"))
+async def booking_delete_selected_do(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    selected = admin_selected_bookings.get(cb.from_user.id, set())
+
+    if not selected:
+        await cb.answer("Нічого не вибрано", show_alert=True)
+        return
+
+    count = 0
+    for booking_id in list(selected):
+        release_blocked_slots(booking_id)
+        cur.execute("DELETE FROM bookings WHERE id=?", (booking_id,))
+        count += cur.rowcount
+
+    conn.commit()
+    admin_selected_bookings[cb.from_user.id] = set()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"🗑 Видалено записів: {count}",
+        nav_buttons("admin_all_bookings")
+    )
+    await cb.answer("Видалено")
+
+
+@dp.callback_query(F.data.startswith("booking_manage_"))
+async def booking_manage(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    booking_id = int(cb.data.replace("booking_manage_", ""))
+
+    cur.execute("""
+    SELECT name, service, price, date, time, status, payment_status
+    FROM bookings
+    WHERE id=?
+    """, (booking_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запис не знайдено", show_alert=True)
+        return
+
+    name, service, price, date, time, status, payment = row
+
+    kb = InlineKeyboardBuilder()
+    if status != "✅ Завершено":
+        kb.button(text="✅ Закрити як завершений", callback_data=f"booking_complete_{booking_id}")
+    if status not in ("❌ Скасовано клієнтом", "❌ Відхилено"):
+        kb.button(text="❌ Скасувати і звільнити вікно", callback_data=f"booking_admin_cancel_{booking_id}")
+    kb.button(text="🗑 Видалити запис з бази", callback_data=f"booking_delete_{booking_id}")
+    kb.button(text="🔙 До розділів записів", callback_data="admin_all_bookings")
+    kb.button(text="🏠 Адмін-панель", callback_data="admin_panel")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📋 Запис #{booking_id}\n\n"
+        f"👤 Клієнт: {name}\n"
+        f"💅 Послуга: {service}\n"
+        f"💰 Ціна: {price}\n"
+        f"📅 Дата: {date}\n"
+        f"🕒 Час: {time}\n"
+        f"📌 Статус: {status}\n"
+        f"💳 Оплата: {payment}",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("booking_complete_"))
+async def booking_complete(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    booking_id = int(cb.data.replace("booking_complete_", ""))
+
+    cur.execute("UPDATE bookings SET status='✅ Завершено' WHERE id=?", (booking_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "✅ Запис закрито як завершений.",
+        nav_buttons("admin_all_bookings")
+    )
+    await cb.answer("Завершено")
+
+
+@dp.callback_query(F.data.startswith("booking_admin_cancel_"))
+async def booking_admin_cancel(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("booking_admin_cancel_", ""))
+
+    cur.execute("SELECT user_id, name, date, time FROM bookings WHERE id=?", (booking_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запис не знайдено", show_alert=True)
+        return
+
+    client_id, name, date, time = row
+
+    cur.execute("""
+    UPDATE bookings
+    SET status='❌ Скасовано адміністратором',
+        payment_status='❌ Скасовано адміністратором'
+    WHERE id=?
+    """, (booking_id,))
+    conn.commit()
+
+    release_blocked_slots(booking_id)
+
+    try:
+        await bot.send_message(
+            client_id,
+            f"❌ {name}, ваш запис скасовано адміністратором.\n\n"
+            "Будь ласка, звʼяжіться з майстром для уточнення деталей."
+        )
+    except Exception:
+        pass
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "❌ Запис скасовано, вікна звільнено.",
+        nav_buttons("admin_all_bookings")
+    )
+    await cb.answer("Скасовано")
+
+
+@dp.callback_query(F.data.startswith("booking_delete_"))
+async def booking_delete_confirm(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("booking_delete_", ""))
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🗑 Так, видалити назавжди", callback_data=f"booking_delete_do_{booking_id}")
+    kb.button(text="🔙 Ні, назад", callback_data=f"booking_manage_{booking_id}")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "⚠️ Видалення запису\n\n"
+        "Це прибере запис з бази бота.\n"
+        "Якщо запис був активний — краще спочатку скасувати його, щоб звільнити вікно.\n\n"
+        "Видалити назавжди?",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("booking_delete_do_"))
+async def booking_delete(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("booking_delete_do_", ""))
+
+    # На всякий випадок звільняємо заблоковані вікна, якщо вони були.
+    release_blocked_slots(booking_id)
+
+    cur.execute("DELETE FROM bookings WHERE id=?", (booking_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🗑 Запис видалено з бази.",
+        nav_buttons("admin_all_bookings")
+    )
+    await cb.answer("Видалено")
+
+
+@dp.callback_query(F.data == "bookings_clean_old")
+async def bookings_clean_old(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    cur.execute("""
+    SELECT id FROM bookings
+    WHERE status IN ('❌ Скасовано клієнтом', '❌ Відхилено', '❌ Скасовано адміністратором')
+    """)
+    ids = [row[0] for row in cur.fetchall()]
+
+    for booking_id in ids:
+        release_blocked_slots(booking_id)
+
+    cur.execute("""
+    DELETE FROM bookings
+    WHERE status IN ('❌ Скасовано клієнтом', '❌ Відхилено', '❌ Скасовано адміністратором')
+    """)
+    deleted = cur.rowcount
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"🧹 Старі скасовані записи видалено.\n\n"
+        f"Кількість: {deleted}",
+        nav_buttons("admin_all_bookings")
+    )
+    await cb.answer("Очищено")
+
+
+# ---------- CRM ----------
+
+@dp.callback_query(F.data == "admin_crm")
+async def admin_crm(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу")
+        return
+
+    cur.execute("""
+    SELECT b.user_id, b.name, COUNT(b.id) as visits
+    FROM bookings b
+    WHERE b.status IN ('✅ Підтверджено', '✅ Завершено')
+    GROUP BY b.user_id, b.name
+    ORDER BY visits DESC
+    LIMIT 12
+    """)
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(
+            cb.message.chat.id,
+            cb.from_user.id,
+            "💎 CRM поки порожня.",
+            nav_buttons("admin_panel")
+        )
+        await cb.answer()
+        return
+
+    kb = InlineKeyboardBuilder()
+    for user_id, name, visits in rows:
+        level = "💎 VIP" if visits >= 3 else "👤"
+        kb.button(text=f"{level} {name} • {visits} візитів", callback_data=f"crm_client_{user_id}")
+
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(2, 2, 2, 2, 2, 2, 1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "💎 CRM клієнтів\n\n"
+        "Натисніть на клієнта для перегляду:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("crm_client_"))
+async def crm_client(cb: CallbackQuery):
+    client_id = int(cb.data.replace("crm_client_", ""))
+
+    cur.execute("""
+    SELECT name, service, date, time, status
+    FROM bookings
+    WHERE user_id=?
+    ORDER BY id DESC
+    LIMIT 5
+    """, (client_id,))
+    rows = cur.fetchall()
+
+    if not rows:
+        await cb.answer("Клієнта не знайдено", show_alert=True)
+        return
+
+    name = rows[0][0]
+    text = f"💎 Клієнт: {name}\n\n"
+    for name, service, date, time, status in rows:
+        text += f"• {date} {time} — {service} — {status}\n"
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        text,
+        nav_buttons("admin_crm")
+    )
+    await cb.answer()
+
+
+# ---------- Заплановані запити ----------
+
+@dp.callback_query(F.data == "admin_planned_requests")
+async def admin_planned_requests(cb: CallbackQuery):
+    await show_planned_page(cb.message.chat.id, cb.from_user.id, 0)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("planned_page_"))
+async def planned_page(cb: CallbackQuery):
+    page = int(cb.data.replace("planned_page_", ""))
+    await show_planned_page(cb.message.chat.id, cb.from_user.id, page)
+    await cb.answer()
+
+
+async def show_planned_page(chat_id, user_id, page: int = 0):
+    cur.execute("""
+    SELECT id, name, service, date, time, username, status
+    FROM planned_requests
+    ORDER BY id DESC
+    """)
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(chat_id, user_id, "📝 Запланованих запитів поки немає.", admin_menu())
+        return
+
+    part, page = page_slice(rows, page)
+
+    kb = InlineKeyboardBuilder()
+    for req_id, name, service, date, time, username, status in part:
+        kb.button(text=f"📝 #{req_id} • {name} • {date} {time}", callback_data=f"planned_manage_{req_id}")
+
+    nav_count = admin_pagination_buttons(kb, "planned_page", page, len(rows))
+    kb.button(text="🧹 Видалити закриті", callback_data="planned_clean_closed")
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    if nav_count:
+        kb.adjust(1, 1, 1, 1, 1, 1, 1, 1, nav_count, 1, 1)
+    else:
+        kb.adjust(1)
+
+    await show_screen(
+        chat_id,
+        user_id,
+        f"📝 Заплановані запити\n\nСторінка: {page + 1}",
+        kb.as_markup()
+    )
+
+
+@dp.callback_query(F.data.startswith("planned_manage_"))
+async def planned_manage(cb: CallbackQuery):
+    req_id = int(cb.data.replace("planned_manage_", ""))
+
+    cur.execute("""
+    SELECT name, service, date, time, username, status
+    FROM planned_requests
+    WHERE id=?
+    """, (req_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запит не знайдено", show_alert=True)
+        return
+
+    name, service, date, time, username, status = row
+
+    kb = InlineKeyboardBuilder()
+    if status != "✅ Закрито":
+        kb.button(text="✅ Закрити запит", callback_data=f"planned_close_{req_id}")
+    kb.button(text="🗑 Видалити запит", callback_data=f"planned_delete_{req_id}")
+    kb.button(text="🔙 До списку", callback_data="admin_planned_requests")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"📝 Запит #{req_id}\n\n"
+        f"👤 Клієнт: {name}\n"
+        f"💅 Послуга: {service}\n"
+        f"📅 Бажана дата: {date}\n"
+        f"🕒 Час: {time}\n"
+        f"Telegram: @{username}\n"
+        f"📌 Статус: {status}",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("planned_close_"))
+async def planned_close(cb: CallbackQuery):
+    req_id = int(cb.data.replace("planned_close_", ""))
+
+    cur.execute("UPDATE planned_requests SET status='✅ Закрито' WHERE id=?", (req_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "✅ Запланований запит закрито.",
+        nav_buttons("admin_planned_requests")
+    )
+    await cb.answer("Закрито")
+
+
+@dp.callback_query(F.data.startswith("planned_delete_"))
+async def planned_delete(cb: CallbackQuery):
+    req_id = int(cb.data.replace("planned_delete_", ""))
+
+    cur.execute("DELETE FROM planned_requests WHERE id=?", (req_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🗑 Запит видалено.",
+        nav_buttons("admin_planned_requests")
+    )
+    await cb.answer("Видалено")
+
+
+@dp.callback_query(F.data == "planned_clean_closed")
+async def planned_clean_closed(cb: CallbackQuery):
+    cur.execute("DELETE FROM planned_requests WHERE status='✅ Закрито'")
+    deleted = cur.rowcount
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"🧹 Закриті запити видалено: {deleted}",
+        nav_buttons("admin_planned_requests")
+    )
+    await cb.answer("Очищено")
+
+
+# ---------- Заявки на курс ----------
+
+@dp.callback_query(F.data == "admin_course_leads")
+async def admin_course_leads(cb: CallbackQuery):
+    cur.execute("SELECT id, name, phone, format, username FROM course_leads ORDER BY id DESC")
+    rows = cur.fetchall()
+
+    if not rows:
+        await show_screen(cb.message.chat.id, cb.from_user.id, "🎓 Заявок на курс поки немає.", admin_menu())
+        await cb.answer()
+        return
+
+    kb = InlineKeyboardBuilder()
+    for lead_id, name, phone, form, username in rows[:12]:
+        kb.button(text=f"🎓 {name} • {form}", callback_data=f"course_view_{lead_id}")
+
+    kb.button(text="🔙 Назад", callback_data="admin_panel")
+    kb.adjust(2, 2, 2, 2, 2, 2, 1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🎓 Заявки на курс\n\n"
+        "Оберіть заявку:",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("course_view_"))
+async def course_lead(cb: CallbackQuery):
+    lead_id = int(cb.data.replace("course_view_", ""))
+
+    cur.execute("SELECT name, phone, format, username FROM course_leads WHERE id=?", (lead_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Заявку не знайдено", show_alert=True)
+        return
+
+    name, phone, form, username = row
+
+    kb = InlineKeyboardBuilder()
+    kb.button(text="✅ Закрити заявку", callback_data=f"course_lead_close_{lead_id}")
+    kb.button(text="🗑 Видалити", callback_data=f"course_lead_delete_{lead_id}")
+    kb.button(text="🔙 До заявок", callback_data="admin_course_leads")
+    kb.adjust(1)
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        f"🎓 Заявка на курс #{lead_id}\n\n"
+        f"👤 Імʼя: {name}\n"
+        f"📱 Телефон: {phone}\n"
+        f"📚 Формат: {form}\n"
+        f"Telegram: @{username}",
+        kb.as_markup()
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("course_lead_close_"))
+async def course_lead_close(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    lead_id = int(cb.data.replace("course_lead_close_", ""))
+
+    # У таблиці немає статусу, тому закриття = видалення з активного списку.
+    cur.execute("DELETE FROM course_leads WHERE id=?", (lead_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "✅ Заявку закрито.",
+        nav_buttons("admin_course_leads")
+    )
+    await cb.answer("Закрито")
+
+
+@dp.callback_query(F.data.startswith("course_lead_delete_"))
+async def course_lead_delete(cb: CallbackQuery):
+    if cb.from_user.id != ADMIN_ID:
+        await cb.answer("Немає доступу", show_alert=True)
+        return
+
+    lead_id = int(cb.data.replace("course_lead_delete_", ""))
+
+    cur.execute("DELETE FROM course_leads WHERE id=?", (lead_id,))
+    conn.commit()
+
+    await show_screen(
+        cb.message.chat.id,
+        cb.from_user.id,
+        "🗑 Заявку видалено.",
+        nav_buttons("admin_course_leads")
+    )
+    await cb.answer("Видалено")
+
+
+# ===================== ПІДТВЕРДЖЕННЯ ЗАПИСУ =====================
+
+@dp.callback_query(F.data.startswith("confirm_booking_"))
+async def confirm_booking(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("confirm_booking_", ""))
+
+    cur.execute("SELECT user_id, name FROM bookings WHERE id=?", (booking_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запис не знайдено")
+        return
+
+    client_id, name = row
+
+    cur.execute("""
+    UPDATE bookings
+    SET status='✅ Підтверджено', payment_status='✅ Передоплата підтверджена'
+    WHERE id=?
+    """, (booking_id,))
+    cur.execute("""
+    INSERT INTO client_stats (user_id, visits)
+    VALUES (?, 1)
+    ON CONFLICT(user_id) DO UPDATE SET visits = visits + 1
+    """, (client_id,))
+    conn.commit()
+
+    await bot.send_message(
+        client_id,
+        f"✅ {name}, ваш запис підтверджено!\n\n"
+        "Передоплату отримано. Чекаємо вас 🌸"
+    )
+
+    try:
+        await cb.message.edit_caption((cb.message.caption or "") + "\n\n✅ ПІДТВЕРДЖЕНО")
+    except Exception:
+        pass
+
+    await cb.answer("Підтверджено")
+
+
+@dp.callback_query(F.data.startswith("decline_booking_"))
+async def decline_booking(cb: CallbackQuery):
+    booking_id = int(cb.data.replace("decline_booking_", ""))
+
+    cur.execute("SELECT user_id, name, date, time FROM bookings WHERE id=?", (booking_id,))
+    row = cur.fetchone()
+
+    if not row:
+        await cb.answer("Запис не знайдено")
+        return
+
+    client_id, name, date, time = row
+
+    cur.execute(
+        "UPDATE bookings SET status='❌ Відхилено', payment_status='❌ Відхилено' WHERE id=?",
+        (booking_id,)
+    )
+    conn.commit()
+
+    # Якщо заявка відхилена — повертаємо всі заблоковані сусідні слоти.
+    release_blocked_slots(booking_id)
+
+    await bot.send_message(
+        client_id,
+        f"❌ {name}, на жаль, заявку відхилено.\n\n"
+        "Звʼяжіться з майстром."
+    )
+
+    try:
+        await cb.message.edit_caption((cb.message.caption or "") + "\n\n❌ ВІДХИЛЕНО")
+    except Exception:
+        pass
+
+    await cb.answer("Відхилено")
+
+
+# ===================== МІЙ ЗАПИС =====================
+
+async def show_my_booking(chat_id, user_id):
+    cur.execute("""
+    SELECT id, name, service, price, date, time, status, payment_status
+    FROM bookings
+    WHERE user_id=?
+    ORDER BY id DESC
+    LIMIT 1
+    """, (user_id,))
+    row = cur.fetchone()
+
+    markup = nav_buttons('main')
+
+    if not row:
+        text = "У вас поки немає активного запису."
+    else:
+        booking_id, name, service, price, date, time, status, payment = row
+        text = (
+            "🗓 Мій запис:\n\n"
+            f"👤 Імʼя: {name}\n"
+            f"💅 Послуга: {service}\n"
+            f"💰 Ціна: {price}\n"
+            f"📅 Дата: {date}\n"
+            f"🕒 Час: {time}\n"
+            f"📌 Статус: {status}\n"
+            f"💳 Оплата: {payment}"
+        )
+
+        if status not in ("❌ Скасовано клієнтом", "❌ Відхилено"):
+            kb = InlineKeyboardBuilder()
+            kb.button(text="❌ Скасувати запис", callback_data=f"cancel_warn_{booking_id}")
+            kb.button(text="🏠 Головне меню", callback_data="main")
+            kb.adjust(1)
+            markup = kb.as_markup()
+
+    await show_screen(chat_id, user_id, text, markup)
+
+
+# ===================== ОБРОБКА ФОТО =====================
+
+@dp.message(F.photo)
+async def photo_handler(message: Message):
+    user_id = message.from_user.id
+
+    if user_id in user_data and user_data[user_id].get("step") == "client_review":
+        file_id = message.photo[-1].file_id
+        text = message.caption or "⭐ Відгук клієнта"
+
+        cur.execute("INSERT INTO reviews (file_id, text) VALUES (?, ?)", (file_id, text))
+        conn.commit()
+
+        await bot.send_message(
+            ADMIN_ID,
+            "⭐ Новий відгук від клієнта!\n\n"
+            f"Клієнт: @{message.from_user.username or 'без username'}\n"
+            f"Текст: {text}"
+        )
+
+        user_data.pop(user_id, None)
+
+        await delete_user_message(message)
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "💖 Дякуємо за відгук!\n\n"
+            "Ваша думка дуже важлива для майстра ✨",
+            nav_buttons("main")
+        )
+        return
+
+    if user_id in user_data and user_data[user_id].get("step") == "review_add":
+        file_id = message.photo[-1].file_id
+        text = message.caption or "⭐ Відгук клієнта"
+
+        cur.execute("INSERT INTO reviews (file_id, text) VALUES (?, ?)", (file_id, text))
+        conn.commit()
+        user_data.pop(user_id, None)
+
+        await delete_user_message(message)
+        await show_screen(message.chat.id, user_id, "✅ Відгук додано.", reviews_admin_menu())
+        return
+
+    if user_id in user_data and user_data[user_id].get("step") == "portfolio_add_photo":
+        file_id = message.photo[-1].file_id
+        caption = message.caption or "📸 Робота майстра"
+
+        cur.execute(
+            "INSERT INTO portfolio (file_id, caption) VALUES (?, ?)",
+            (file_id, caption)
+        )
+        conn.commit()
+        user_data.pop(user_id, None)
+
+        await delete_user_message(message)
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "✅ Фото додано в портфоліо.",
+            portfolio_admin_menu()
+        )
+        return
+
+    if user_id not in user_data or user_data[user_id].get("step") != "receipt":
+        await delete_user_message(message)
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "Спочатку оберіть послугу, дату та час.",
+            None
+        )
+        return
+
+    data = user_data[user_id]
+
+    name = data["name"]
+    service = data["service"]
+    price = data["price"]
+    date = data["date"]
+    time = data["time"]
+
+    cur.execute("SELECT id FROM slots WHERE date=? AND time=? AND is_taken=0", (date, time))
+    if not cur.fetchone():
+        user_data.pop(user_id, None)
+        await delete_user_message(message)
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "Цей час уже зайняли. Оберіть інший.",
+            None
+        )
+        return
+
+    cur.execute("""
+    INSERT INTO bookings (user_id, name, service, price, date, time, status, payment_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        user_id,
+        name,
+        service,
+        price,
+        date,
+        time,
+        "⏳ Очікує підтвердження",
+        "⏳ Чек на перевірці"
+    ))
+
+    booking_id = cur.lastrowid
+
+    # Блокуємо вибраний час і сусідні слоти,
+    # щоб на процедуру було не менше 1 години.
+    block_nearby_slots(booking_id, date, time)
+
+    is_vip_order = data.get("vip") == "VIP-пріоритет"
+
+    kb = InlineKeyboardBuilder()
+    if is_vip_order:
+        kb.button(text="💎✅ ПІДТВЕРДИТИ VIP-ЗАПИС", callback_data=f"confirm_booking_{booking_id}")
+        kb.button(text="❌ Відхилити VIP-заявку", callback_data=f"decline_booking_{booking_id}")
+    else:
+        kb.button(text="✅ Підтвердити запис і оплату", callback_data=f"confirm_booking_{booking_id}")
+        kb.button(text="❌ Відхилити", callback_data=f"decline_booking_{booking_id}")
+    kb.adjust(1)
+
+    if is_vip_order:
+        admin_caption = (
+            "💎💎💎 VIP-ЗАЯВКА З ЧЕКОМ 💎💎💎\n"
+            "🔥 ОБРОБИТИ В ПЕРШУ ЧЕРГУ 🔥\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"👤 VIP-клієнт: {name}\n"
+            f"💅 Послуга: {service}\n"
+            f"💰 Ціна: {price}\n"
+            f"💎 Формат: VIP-пріоритет\n"
+            f"💳 Передоплата: {PREPAY_AMOUNT}\n"
+            f"📅 Дата: {date}\n"
+            f"🕒 Час: {time}\n"
+            "⏳ Резерв: мінімум 1 година, сусідні слоти закриті\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "✅ Перевірте чек і підтвердьте VIP-запис."
+        )
+    else:
+        admin_caption = (
+            "💌 Нова звичайна заявка з чеком\n\n"
+            f"👤 Клієнт: {name}\n"
+            f"💅 Послуга: {service}\n"
+            f"💰 Ціна: {price}\n"
+            f"🔥 Пріоритет: звичайний запис\n"
+            f"💳 Передоплата: {PREPAY_AMOUNT}\n"
+            f"📅 Дата: {date}\n"
+            f"🕒 Час: {time}\n"
+            "⏳ Резерв: мінімум 1 година, сусідні слоти закриті\n\n"
+            "Перевірте чек і підтвердьте запис."
+        )
+
+    await bot.send_photo(
+        ADMIN_ID,
+        photo=message.photo[-1].file_id,
+        caption=admin_caption,
+        reply_markup=kb.as_markup()
+    )
+
+    user_data.pop(user_id, None)
+
+    await delete_user_message(message)
+    await show_screen(
+        message.chat.id,
+        user_id,
+        "✅ Чек надіслано майстру.\n\n"
+        f"{name}, ваша заявка створена та очікує підтвердження.\n\n"
+        "🎓 До речі, якщо вам цікава beauty-сфера — ви можете навчитися цьому й почати заробляти. "
+        "Перегляньте розділ «Навчання / Курс».",
+        None
+    )
+
+
+# ===================== ТЕКСТОВІ ВІДПОВІДІ =====================
+
+@dp.message()
+async def text_handler(message: Message):
+    user_id = message.from_user.id
+    save_user(user_id)
+
+    if user_id not in user_data:
+        await delete_user_message(message)
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "Оберіть дію на нижній панелі 👇",
+            None
+        )
+        return
+
+    step = user_data[user_id].get("step")
+    text = message.text
+
+    await delete_user_message(message)
+
+    if step == "name":
+        user_data[user_id]["name"] = text
+
+        kb = InlineKeyboardBuilder()
+        for key, (service, price) in SERVICES.items():
+            clean_service = service.replace("\n", " ")
+            kb.button(text=f"{clean_service} — {price}", callback_data=f"service_{key}")
+
+        kb.button(text="🔙 Назад", callback_data="book_back")
+        kb.button(text="🏠 Головне меню", callback_data="main")
+        kb.adjust(1)
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "💅 Оберіть послугу:",
+            kb.as_markup()
+        )
+        return
+
+    if step == "client_review":
+        cur.execute("INSERT INTO reviews (file_id, text) VALUES (?, ?)", (None, text))
+        conn.commit()
+
+        await bot.send_message(
+            ADMIN_ID,
+            "⭐ Новий відгук від клієнта!\n\n"
+            f"Клієнт: @{message.from_user.username or 'без username'}\n"
+            f"Текст: {text}"
+        )
+
+        user_data.pop(user_id, None)
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "💖 Дякуємо за відгук!\n\n"
+            "Ваша думка дуже важлива для майстра ✨",
+            nav_buttons("main")
+        )
+        return
+
+    if step == "review_add":
+        cur.execute("INSERT INTO reviews (file_id, text) VALUES (?, ?)", (None, text))
+        conn.commit()
+        user_data.pop(user_id, None)
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "✅ Текстовий відгук додано.",
+            reviews_admin_menu()
+        )
+        return
+
+    if step == "planned_name":
+        user_data[user_id]["planned_name"] = text
+
+        kb = InlineKeyboardBuilder()
+        for key, (service, price) in SERVICES.items():
+            kb.button(text=f"{service} — {price}", callback_data=f"planned_service_{key}")
+
+        kb.button(text="🔙 Назад", callback_data="main")
+        kb.adjust(1)
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "💅 Оберіть послугу для запланованого запису:",
+            kb.as_markup()
+        )
+        return
+
+    if step == "planned_date":
+        user_data[user_id]["planned_date"] = text
+        user_data[user_id]["step"] = "planned_time"
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "🕒 Введіть бажаний час.\n\n"
+            "Наприклад: 11:30",
+            nav_buttons("main")
+        )
+        return
+
+    if step == "planned_time":
+        user_data[user_id]["planned_time"] = text
+
+        name = user_data[user_id]["planned_name"]
+        service = user_data[user_id]["planned_service"]
+        date = user_data[user_id]["planned_date"]
+        time = user_data[user_id]["planned_time"]
+        username = message.from_user.username or "без username"
+
+        cur.execute("""
+        INSERT INTO planned_requests (user_id, name, service, date, time, username, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            user_id,
+            name,
+            service,
+            date,
+            time,
+            username,
+            "⏳ Очікує відповіді майстра"
+        ))
+        conn.commit()
+
+        kb = InlineKeyboardBuilder()
+        if username != "без username":
+            kb.button(text="💬 Написати клієнту", url=f"https://t.me/{username}")
+        kb.adjust(1)
+
+        await bot.send_message(
+            ADMIN_ID,
+            "📝 Новий запит на запланований запис!\n\n"
+            f"👤 Клієнт: {name}\n"
+            f"💅 Послуга: {service}\n"
+            f"📅 Бажана дата/місяць: {date}\n"
+            f"🕒 Бажаний час: {time}\n"
+            f"Telegram: @{username}\n\n"
+            "Передоплата не внесена. Потрібно звʼязатися з клієнтом.",
+            reply_markup=kb.as_markup() if username != "без username" else None
+        )
+
+        user_data.pop(user_id, None)
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "✅ Ваш запит відправлено майстру!\n\n"
+            f"💅 Послуга: {service}\n"
+            f"📅 Бажана дата/місяць: {date}\n"
+            f"🕒 Бажаний час: {time}\n\n"
+            "Передоплата зараз не потрібна.\n"
+            "Майстер звʼяжеться з вами для уточнення деталей.",
+            nav_buttons("main")
+        )
+        return
+
+    if step == "course_name":
+        user_data[user_id]["course_name"] = text
+        user_data[user_id]["step"] = "course_phone"
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "📱 Введіть ваш номер телефону:",
+            nav_buttons("course")
+        )
+        return
+
+    if step == "course_phone":
+        user_data[user_id]["course_phone"] = text
+        user_data[user_id]["step"] = "course_format"
+
+        kb = InlineKeyboardBuilder()
+        kb.button(text="Онлайн", callback_data="course_format_online")
+        kb.button(text="Офлайн", callback_data="course_format_offline")
+        kb.button(text="Ще не знаю", callback_data="course_format_unknown")
+        kb.button(text="🔙 Назад", callback_data="course")
+        kb.adjust(1)
+
+        await show_screen(
+            message.chat.id,
+            user_id,
+            "📚 Який формат навчання вас цікавить?",
+            kb.as_markup()
+        )
+        return
+
+
+# ===================== ІНШЕ =====================
+
+@dp.callback_query(F.data == "none")
+async def none(cb: CallbackQuery):
+    await cb.answer()
+
+
+async def review_request_after_visit_loop():
+    """
+    Просить клієнта залишити відгук через 2 години після часу запису,
+    коли процедура вже мала завершитися.
+    """
+    while True:
+        now = datetime.now()
+
+        cur.execute("""
+        SELECT id, user_id, name, service, date, time, review_request_sent
+        FROM bookings
+        WHERE status='✅ Підтверджено' AND review_request_sent=0
+        """)
+        rows = cur.fetchall()
+
+        for booking_id, user_id, name, service, date, time, sent in rows:
+            try:
+                booking_dt = datetime.strptime(f"{date} {time}", "%d.%m.%Y %H:%M")
+                review_time = booking_dt + timedelta(hours=2)
+
+                if now >= review_time:
+                    kb = InlineKeyboardBuilder()
+                    kb.button(text="⭐ Залишити відгук", callback_data="client_leave_review")
+                    kb.adjust(1)
+
+                    await send_or_queue_notification(
+                        user_id,
+                        "💖 Як вам результат?\n\n"
+                        f"{name}, буду дуже вдячна за ваш відгук після процедури «{service}».\n"
+                        "Ваш відгук допомагає іншим дівчатам довіритися майстру ✨",
+                        reply_markup=kb.as_markup()
+                    )
+
+                    cur.execute("UPDATE bookings SET review_request_sent=1 WHERE id=?", (booking_id,))
+                    conn.commit()
+
+            except Exception:
+                pass
+
+        await asyncio.sleep(600)
+
+
+async def course_funnel_reminder():
+    """
+    Дожим по курсу через 24 години після перегляду розділу.
+    """
+    while True:
+        now = datetime.now()
+
+        cur.execute("SELECT user_id, viewed_at FROM course_funnel WHERE reminder_sent=0")
+        rows = cur.fetchall()
+
+        for user_id, viewed_at in rows:
+            try:
+                viewed_dt = datetime.fromisoformat(viewed_at)
+                if now - viewed_dt >= timedelta(hours=24):
+                    await send_or_queue_notification(
+                        user_id,
+                        "🎓 Ви переглядали навчання\n\n"
+                        "Якщо вам цікаво спробувати себе в beauty-сфері, "
+                        "можу розповісти деталі курсу та допомогти обрати формат ✨"
+                    )
+                    cur.execute("UPDATE course_funnel SET reminder_sent=1 WHERE user_id=?", (user_id,))
+                    conn.commit()
+            except Exception:
+                pass
+
+        await asyncio.sleep(3600)
+
+
+
+# ===================== WEBAPP ВНУТРИ ЭТОГО ФАЙЛА =====================
+
+WEBAPP_HTML = "<!DOCTYPE html>\n<html lang=\"uk\">\n<head>\n  <meta charset=\"UTF-8\" />\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />\n  <title>Beauty WebApp</title>\n  <script src=\"https://telegram.org/js/telegram-web-app.js\"></script>\n  <style>\n    * { box-sizing: border-box; }\n    body {\n      margin: 0;\n      font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", sans-serif;\n      background: radial-gradient(circle at top, #3b1b2b 0%, #111 42%, #050505 100%);\n      color: #fff;\n      padding-bottom: 90px;\n    }\n    .top {\n      position: sticky; top: 0; z-index: 10;\n      padding: 14px 16px;\n      background: rgba(0,0,0,.65);\n      backdrop-filter: blur(18px);\n      border-bottom: 1px solid rgba(255,255,255,.08);\n      display: flex; align-items: center; gap: 12px;\n    }\n    .logo {\n      width: 42px; height: 42px; border-radius: 50%;\n      background: linear-gradient(135deg, #ff78b7, #b42b6f);\n      display: grid; place-items: center;\n      font-weight: 800; font-size: 20px;\n    }\n    .title { flex: 1; text-align: center; }\n    .title b { display:block; font-size: 16px; }\n    .title span { color:#aaa; font-size:12px; }\n\n    .wrap { padding: 16px; }\n    .hero {\n      height: 190px;\n      border-radius: 28px;\n      padding: 24px;\n      display: flex;\n      flex-direction: column;\n      justify-content: flex-end;\n      background:\n        linear-gradient(135deg, rgba(255,105,180,.32), rgba(0,0,0,.4)),\n        radial-gradient(circle at 20% 10%, rgba(255,255,255,.18), transparent 30%),\n        #171717;\n      border: 1px solid rgba(255,255,255,.1);\n      box-shadow: 0 18px 45px rgba(0,0,0,.4);\n    }\n    .hero h1 { margin: 0; font-family: Georgia, serif; letter-spacing: 1px; font-size: 28px; }\n    .hero p { margin: 8px 0 0; color: #ffd3e8; }\n\n    .message {\n      margin-top: 14px;\n      background: rgba(24,24,27,.82);\n      border: 1px solid rgba(255,255,255,.09);\n      border-radius: 24px;\n      padding: 18px;\n      line-height: 1.45;\n      box-shadow: 0 14px 35px rgba(0,0,0,.3);\n    }\n    .section-title {\n      text-align:center; color:#ff7ab6;\n      font-size:13px; font-weight:800;\n      letter-spacing: 2px; margin: 18px 0 12px;\n    }\n    .grid {\n      display:grid; grid-template-columns:1fr 1fr; gap:12px;\n    }\n    .card {\n      min-height: 128px;\n      border-radius: 24px;\n      padding: 16px;\n      border: 1px solid rgba(255,255,255,.1);\n      background: rgba(24,24,27,.82);\n      box-shadow: 0 12px 30px rgba(0,0,0,.28);\n      cursor: pointer;\n      transition: .15s;\n      position: relative;\n      overflow: hidden;\n    }\n    .card:active { transform: scale(.98); }\n    .icon {\n      width: 48px; height: 48px; border-radius: 18px;\n      background: rgba(255,105,180,.14);\n      color:#ff7ab6;\n      display:grid; place-items:center;\n      font-size: 26px; margin-bottom: 12px;\n    }\n    .card b { display:block; font-size:17px; }\n    .card span { display:block; margin-top:5px; color:#aaa; font-size:13px; }\n    .badge {\n      position:absolute; right:10px; bottom:10px;\n      background:#ff70ad; color:#fff;\n      border-radius:999px; padding:5px 10px;\n      font-weight:800; font-size:13px;\n    }\n    .wide { grid-column: 1 / -1; min-height: 98px; }\n    .bottom {\n      position: fixed; left:0; right:0; bottom:0;\n      background: rgba(0,0,0,.82);\n      backdrop-filter: blur(18px);\n      border-top:1px solid rgba(255,255,255,.1);\n      display:grid; grid-template-columns: repeat(4, 1fr);\n      padding: 10px 8px 18px;\n      max-width: 520px; margin:auto;\n    }\n    .nav { text-align:center; color:#aaa; font-size:12px; cursor:pointer; }\n    .nav div { font-size:24px; margin-bottom:3px; }\n    .nav.active { color:#ff7ab6; }\n    .page { display:none; }\n    .page.active { display:block; }\n    .gift-img {\n      height: 210px; border-radius: 22px;\n      background: linear-gradient(135deg, #ffd1df, #eaa0b8);\n      color:#3b1b2b;\n      display:grid; place-items:center;\n      text-align:center;\n      font-family: Georgia, serif;\n      font-size:28px;\n      margin: 16px 0;\n    }\n    .discount {\n      border:1px solid rgba(255,105,180,.4);\n      background:rgba(255,105,180,.1);\n      border-radius:22px;\n      padding:18px;\n      margin-top:14px;\n    }\n    .discount strong { color:#ff7ab6; }\n    .btn {\n      width:100%;\n      border:0;\n      margin-top:16px;\n      border-radius:20px;\n      padding:16px;\n      background: linear-gradient(135deg, #ff7ab6, #d64c8b);\n      color:white;\n      font-weight:800;\n      font-size:16px;\n      cursor:pointer;\n    }\n    .back {\n      background: rgba(255,255,255,.08);\n    }\n    .service {\n      display:flex; justify-content:space-between; align-items:center;\n      padding:16px; border-radius:20px;\n      background:rgba(24,24,27,.82);\n      border:1px solid rgba(255,255,255,.09);\n      margin-bottom:10px;\n    }\n    .service small { color:#aaa; }\n    .service strong { color:#ff9bc7; }\n  </style>\n</head>\n<body>\n  <div class=\"top\">\n    <div class=\"logo\">B</div>\n    <div class=\"title\"><b>Брови | Ламінування вій</b><span>beauty webapp</span></div>\n    <div style=\"width:42px\"></div>\n  </div>\n\n  <div id=\"home\" class=\"page active\">\n    <div class=\"wrap\">\n      <div class=\"hero\">\n        <h1>БРОВИ | ЛАМІ</h1>\n        <p>Твоя краса — моя робота 💖</p>\n      </div>\n\n      <div class=\"message\">\n        <b>Привіт, красуне 💕</b><br>\n        Я твій особистий помічник для запису на брови та ламінування вій ✨<br>\n        Обирай потрібний розділ нижче 👇\n      </div>\n\n      <div class=\"section-title\">ГОЛОВНЕ МЕНЮ</div>\n\n      <div class=\"grid\">\n        <div class=\"card\" onclick=\"send('book')\"><div class=\"icon\">📅</div><b>Записатися</b><span>Обрати послугу та час</span></div>\n        <div class=\"card\" onclick=\"send('vip')\"><div class=\"icon\">💎</div><b>VIP запис</b><span>Ранкові та вечірні слоти</span></div>\n        <div class=\"card\" onclick=\"showPage('gift')\"><div class=\"icon\">🎁</div><b>Сертифікат</b><span>Даруй красу</span><div class=\"badge\">-10%</div></div>\n        <div class=\"card\" onclick=\"send('portfolio')\"><div class=\"icon\">🖼️</div><b>Портфоліо</b><span>Мої роботи</span></div>\n        <div class=\"card\" onclick=\"send('reviews')\"><div class=\"icon\">⭐</div><b>Відгуки</b><span>Що говорять клієнти</span></div>\n        <div class=\"card\" onclick=\"send('price')\"><div class=\"icon\">💰</div><b>Прайс</b><span>Послуги та ціни</span></div>\n        <div class=\"card wide\" onclick=\"send('course')\"><div class=\"icon\">🎓</div><b>Навчання / Курс</b><span>Для майбутніх майстрів</span></div>\n      </div>\n    </div>\n  </div>\n\n  <div id=\"gift\" class=\"page\">\n    <div class=\"wrap\">\n      <div class=\"message\">\n        <b style=\"color:#ff7ab6\">🎁 Подарунковий сертифікат</b>\n        <div class=\"gift-img\">ПОДАРУНКОВИЙ<br>СЕРТИФІКАТ<br><small>для тебе ♥</small></div>\n        <b>Ідеальний подарунок для близьких! 💝</b><br><br>\n        ✨ Будь-яка сума на ваш вибір<br>\n        ✨ Діє на всі послуги<br>\n        ✨ Термін дії — 6 місяців<br>\n        ✨ Оформлення за 5 хвилин\n\n        <div class=\"discount\">\n          <strong>🏷 СПЕЦІАЛЬНА ЗНИЖКА</strong><br>\n          Купуй сертифікат зараз та отримай <b>-10%</b> на процедуру для отримувача 🔥\n        </div>\n\n        <button class=\"btn\" onclick=\"send('gift')\">🎁 Хочу сертифікат</button>\n        <button class=\"btn back\" onclick=\"showPage('home')\">← Назад</button>\n      </div>\n    </div>\n  </div>\n\n  <div class=\"bottom\">\n    <div class=\"nav active\" onclick=\"showPage('home')\"><div>🏠</div>Головна</div>\n    <div class=\"nav\" onclick=\"send('book')\"><div>📅</div>Запис</div>\n    <div class=\"nav\" onclick=\"showPage('gift')\"><div>🎁</div>Сертифікат</div>\n    <div class=\"nav\" onclick=\"send('contact')\"><div>💬</div>Контакт</div>\n  </div>\n\n<script>\n  const tg = window.Telegram?.WebApp;\n  if (tg) {\n    tg.expand();\n    tg.ready();\n    tg.setHeaderColor(\"#0b0b0d\");\n    tg.setBackgroundColor(\"#050505\");\n  }\n\n  function send(action) {\n    if (tg) {\n      tg.sendData(action);\n      tg.close();\n    } else {\n      alert(\"Дія: \" + action);\n    }\n  }\n\n  function showPage(id) {\n    document.querySelectorAll(\".page\").forEach(p => p.classList.remove(\"active\"));\n    document.getElementById(id).classList.add(\"active\");\n    window.scrollTo(0,0);\n  }\n</script>\n</body>\n</html>"
+
+
+async def webapp_page(request):
+    return web.Response(text=WEBAPP_HTML, content_type="text/html")
+
+
+async def start_webapp_server():
+    """
+    Локальный сервер для WebApp.
+    Важно: Telegram открывает WebApp только по HTTPS-ссылке.
+    Поэтому этот сервер нужно запускать на хостинге с HTTPS
+    или через tunnel/домен, а ссылку вписать в WEBAPP_PUBLIC_URL.
+    """
+    app = web.Application()
+    app.router.add_get("/", webapp_page)
+    app.router.add_get("/webapp", webapp_page)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    site = web.TCPSite(runner, "0.0.0.0", WEBAPP_PORT)
+    await site.start()
+
+    print(f"WebApp сервер запущен на порту {WEBAPP_PORT}")
+    print(f"WebApp URL для Telegram: {WEBAPP_URL}")
+
+
+async def main():
+    print("Бот запущено 🚀")
+    await start_webapp_server()
+    asyncio.create_task(reminders_loop())
+    asyncio.create_task(repeat_booking_reminder())
+    asyncio.create_task(course_funnel_reminder())
+    asyncio.create_task(review_request_after_visit_loop())
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
