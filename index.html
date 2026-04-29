@@ -1,458 +1,215 @@
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Брови | Ламінування вій</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <style>
-    * {
-      box-sizing: border-box;
-      -webkit-tap-highlight-color: transparent;
-    }
+<title>Брови | Ламінування вій</title>
 
-    body {
-      margin: 0;
-      min-height: 100vh;
-      background:
-        radial-gradient(circle at top, rgba(255, 120, 180, 0.18), transparent 35%),
-        linear-gradient(180deg, #090909 0%, #130b11 55%, #080808 100%);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      color: #fff;
-    }
+<style>
+body {
+    margin:0;
+    font-family:-apple-system, BlinkMacSystemFont, sans-serif;
+    background:#0b0b0c;
+    color:#fff;
+}
 
-    .app {
-      max-width: 480px;
-      margin: 0 auto;
-      padding: 18px 14px 90px;
-    }
+.container {
+    padding:16px;
+    max-width:480px;
+    margin:auto;
+}
 
-    .top {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: 22px;
-    }
+/* HEADER */
+.header {
+    text-align:center;
+    margin-bottom:20px;
+}
 
-    .logo {
-      width: 56px;
-      height: 56px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #ff5fad, #d8a06f);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 28px;
-      font-weight: 800;
-      font-family: Georgia, serif;
-      box-shadow: 0 0 25px rgba(255, 95, 173, 0.35);
-    }
+.header h1 {
+    margin:0;
+    font-size:18px;
+}
 
-    .title {
-      text-align: center;
-      flex: 1;
-    }
+.header p {
+    color:#aaa;
+    font-size:12px;
+}
 
-    .title h1 {
-      margin: 0;
-      font-size: 19px;
-      font-weight: 800;
-    }
+/* HERO */
+.hero {
+    border-radius:24px;
+    height:260px;
+    background:
+    linear-gradient(to top, rgba(0,0,0,0.8), transparent),
+    url("https://images.unsplash.com/photo-1620331311520-246422fd82f9?q=80&w=1400&auto=format&fit=crop");
+    background-size:cover;
+    background-position:center;
+    padding:16px;
+    display:flex;
+    flex-direction:column;
+    justify-content:flex-end;
+}
 
-    .title p {
-      margin: 4px 0 0;
-      color: #d8c6cf;
-      font-size: 13px;
-    }
+.hero h2 {
+    margin:0;
+    font-size:26px;
+}
 
-    .menu-dot {
-      width: 48px;
-      height: 48px;
-      border-radius: 50%;
-      background: rgba(255,255,255,0.07);
-      border: 1px solid rgba(255,255,255,0.12);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 26px;
-      color: #e7b3c8;
-    }
+.hero p {
+    font-size:13px;
+    color:#ddd;
+}
 
-    .hero {
-      border-radius: 28px;
-      overflow: hidden;
-      min-height: 290px;
-      position: relative;
-      margin-bottom: 16px;
-      background-image:
-        linear-gradient(to top, rgba(0,0,0,0.88), rgba(0,0,0,0.08)),
-        url("https://images.unsplash.com/photo-1616394584738-fc6e612e71b9?q=80&w=1400&auto=format&fit=crop");
-      background-size: cover;
-      background-position: center;
-      border: 1px solid rgba(255,255,255,0.12);
-      box-shadow: 0 20px 40px rgba(0,0,0,0.45);
-    }
+/* BUTTON */
+.btn {
+    margin-top:12px;
+    background:linear-gradient(90deg,#ff4fa3,#ff9ac6);
+    border:none;
+    padding:14px;
+    width:100%;
+    border-radius:16px;
+    color:white;
+    font-weight:600;
+}
 
-    .hero-content {
-      position: absolute;
-      left: 22px;
-      right: 22px;
-      bottom: 24px;
-    }
+/* GRID */
+.grid {
+    margin-top:16px;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+}
 
-    .badge {
-      display: inline-block;
-      padding: 7px 12px;
-      border-radius: 999px;
-      background: rgba(255, 116, 177, 0.2);
-      border: 1px solid rgba(255, 180, 211, 0.35);
-      color: #ffd7e6;
-      font-size: 12px;
-      margin-bottom: 12px;
-    }
+.card {
+    height:180px;
+    border-radius:20px;
+    overflow:hidden;
+    position:relative;
+    background-size:cover;
+    background-position:center;
+}
 
-    .hero h2 {
-      margin: 0;
-      font-family: Georgia, serif;
-      font-size: 34px;
-      line-height: 1.05;
-    }
+.card::after {
+    content:"";
+    position:absolute;
+    inset:0;
+    background:linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+}
 
-    .hero p {
-      margin: 10px 0 0;
-      color: #f2dfe7;
-      font-size: 15px;
-      line-height: 1.45;
-    }
+.card-content {
+    position:absolute;
+    bottom:10px;
+    left:10px;
+    right:10px;
+    z-index:2;
+}
 
-    .main-btn {
-      width: 100%;
-      border: none;
-      margin-top: 14px;
-      padding: 17px;
-      border-radius: 22px;
-      color: #fff;
-      font-size: 17px;
-      font-weight: 800;
-      background: linear-gradient(135deg, #ff4fa3, #ff8fc6, #d99b72);
-      box-shadow: 0 14px 34px rgba(255, 79, 163, 0.35);
-    }
+.card h3 {
+    margin:0;
+    font-size:16px;
+}
 
-    .grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 13px;
-      margin-top: 18px;
-    }
+.card p {
+    margin:5px 0 0;
+    font-size:12px;
+    color:#ccc;
+}
 
-    .card {
-      min-height: 210px;
-      border-radius: 24px;
-      overflow: hidden;
-      position: relative;
-      border: 1px solid rgba(255,255,255,0.12);
-      box-shadow: 0 16px 30px rgba(0,0,0,0.35);
-      background-size: cover;
-      background-position: center;
-    }
+/* КАРТИНКИ */
+.portfolio {
+background-image:url("https://images.unsplash.com/photo-1596462502278-27bfdc403348?q=80&w=1200&auto=format&fit=crop");
+}
 
-    .card::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      background: linear-gradient(to top, rgba(0,0,0,0.88), rgba(0,0,0,0.05));
-    }
+.reviews {
+background-image:url("https://images.unsplash.com/photo-1583001809873-a128495da465?q=80&w=1200&auto=format&fit=crop");
+}
 
-    .card-content {
-      position: absolute;
-      z-index: 2;
-      left: 15px;
-      right: 15px;
-      bottom: 15px;
-    }
+.contacts {
+background-image:url("https://images.unsplash.com/photo-1604654894610-df63bc536371?q=80&w=1200&auto=format&fit=crop");
+}
 
-    .card h3 {
-      margin: 0;
-      font-family: Georgia, serif;
-      font-size: 23px;
-      line-height: 1.05;
-    }
+.course {
+background-image:url("https://images.unsplash.com/photo-1607746882042-944635dfe10e?q=80&w=1200&auto=format&fit=crop");
+}
 
-    .card p {
-      margin: 8px 0 0;
-      color: #ead7df;
-      font-size: 13px;
-      line-height: 1.35;
-    }
-
-    .circle-btn {
-      margin-top: 12px;
-      width: 42px;
-      height: 42px;
-      border-radius: 50%;
-      border: none;
-      background: linear-gradient(135deg, #ff8fc6, #d69d86);
-      color: white;
-      font-size: 24px;
-      float: right;
-    }
-
-    .portfolio {
-      background-image:
-        linear-gradient(to top, rgba(0,0,0,0.75), transparent),
-        url("https://images.unsplash.com/photo-1604654894610-df63bc536371?q=80&w=1200&auto=format&fit=crop");
-    }
-
-    .reviews {
-      background-image:
-        linear-gradient(to top, rgba(0,0,0,0.75), transparent),
-        url("https://images.unsplash.com/photo-1522335789203-aabd1fc54bc9?q=80&w=1200&auto=format&fit=crop");
-    }
-
-    .contacts {
-      background-image:
-        linear-gradient(to top, rgba(0,0,0,0.75), transparent),
-        url("https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?q=80&w=1200&auto=format&fit=crop");
-    }
-
-    .course {
-      background-image:
-        linear-gradient(to top, rgba(0,0,0,0.75), transparent),
-        url("https://images.unsplash.com/photo-1596462502278-27bfdc403348?q=80&w=1200&auto=format&fit=crop");
-    }
-
-    .my-booking {
-      background-image:
-        linear-gradient(to top, rgba(0,0,0,0.75), transparent),
-        url("https://images.unsplash.com/photo-1616683693504-3ea7e9ad6fec?q=80&w=1200&auto=format&fit=crop");
-    }
-
-    .services {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 26px;
-      padding: 18px;
-      margin-top: 18px;
-    }
-
-    .services h2 {
-      margin: 0 0 14px;
-      font-size: 21px;
-      font-family: Georgia, serif;
-    }
-
-    .service {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 14px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-    }
-
-    .service:last-child {
-      border-bottom: none;
-    }
-
-    .service-name {
-      font-weight: 700;
-      font-size: 15px;
-    }
-
-    .service-time {
-      color: #cdbbc4;
-      font-size: 12px;
-      margin-top: 3px;
-    }
-
-    .price {
-      color: #ffadd0;
-      font-weight: 800;
-    }
-
-    .bottom-nav {
-      position: fixed;
-      left: 50%;
-      bottom: 10px;
-      transform: translateX(-50%);
-      max-width: 480px;
-      width: calc(100% - 20px);
-      background: rgba(16, 12, 15, 0.88);
-      backdrop-filter: blur(18px);
-      border: 1px solid rgba(255,255,255,0.12);
-      border-radius: 24px;
-      display: flex;
-      justify-content: space-around;
-      padding: 10px 6px;
-      z-index: 20;
-    }
-
-    .nav-item {
-      color: #d8c6cf;
-      text-align: center;
-      font-size: 11px;
-      border: none;
-      background: none;
-      min-width: 58px;
-    }
-
-    .nav-item span {
-      display: block;
-      font-size: 22px;
-      margin-bottom: 3px;
-    }
-
-    .nav-item.active {
-      color: #ff7fbd;
-      font-weight: 800;
-    }
-
-    @media (max-width: 380px) {
-      .grid {
-        grid-template-columns: 1fr;
-      }
-
-      .card {
-        min-height: 220px;
-      }
-    }
-  </style>
+.booking {
+background-image:url("https://images.unsplash.com/photo-1616683693504-3ea7e9ad6fec?q=80&w=1200&auto=format&fit=crop");
+}
+</style>
 </head>
 
 <body>
-  <div class="app">
 
-    <div class="top">
-      <div class="logo">B</div>
-      <div class="title">
-        <h1>Брови | Ламінування вій</h1>
-        <p>beauty webapp</p>
-      </div>
-      <div class="menu-dot">•••</div>
-    </div>
+<div class="container">
 
-    <section class="hero">
-      <div class="hero-content">
-        <div class="badge">premium brow & lashes</div>
-        <h2>Запис на процедуру</h2>
-        <p>Обери послугу, зручну дату та час. Після запису заявка одразу потрапляє майстру.</p>
-      </div>
-    </section>
+<div class="header">
+<h1>Брови | Ламінування вій</h1>
+<p>beauty webapp</p>
+</div>
 
-    <button class="main-btn" onclick="sendAction('booking')">
-      🌸 Почати запис у боті
-    </button>
+<!-- HERO -->
+<div class="hero">
+<h2>Запис на процедуру</h2>
+<p>Обери послугу, дату та час</p>
+</div>
 
-    <div class="grid">
+<button class="btn" onclick="send('booking')">
+🌸 Почати запис
+</button>
 
-      <div class="card portfolio" onclick="sendAction('portfolio')">
-        <div class="card-content">
-          <h3>Портфоліо</h3>
-          <p>Реальні результати: брови, ламінування та натуральний ефект.</p>
-          <button class="circle-btn">→</button>
-        </div>
-      </div>
+<!-- GRID -->
+<div class="grid">
 
-      <div class="card reviews" onclick="sendAction('reviews')">
-        <div class="card-content">
-          <h3>Відгуки</h3>
-          <p>Довіра починається з реальних емоцій клієнтів ⭐</p>
-          <button class="circle-btn">→</button>
-        </div>
-      </div>
+<div class="card portfolio" onclick="send('portfolio')">
+<div class="card-content">
+<h3>Портфоліо</h3>
+<p>Реальні брови</p>
+</div>
+</div>
 
-      <div class="card contacts" onclick="sendAction('contacts')">
-        <div class="card-content">
-          <h3>Контакти</h3>
-          <p>Зв’язок з майстром для уточнення деталей запису.</p>
-          <button class="circle-btn">→</button>
-        </div>
-      </div>
+<div class="card reviews" onclick="send('reviews')">
+<div class="card-content">
+<h3>Відгуки</h3>
+<p>Емоції клієнтів</p>
+</div>
+</div>
 
-      <div class="card course" onclick="sendAction('course')">
-        <div class="card-content">
-          <h3>Курс</h3>
-          <p>Brow Master Start — навчання для старту у beauty-сфері.</p>
-          <button class="circle-btn">→</button>
-        </div>
-      </div>
+<div class="card contacts" onclick="send('contacts')">
+<div class="card-content">
+<h3>Контакти</h3>
+<p>Зв'язок з майстром</p>
+</div>
+</div>
 
-      <div class="card my-booking" onclick="sendAction('my_booking')">
-        <div class="card-content">
-          <h3>Мій запис</h3>
-          <p>Перегляд актуального запису та можливість скасування.</p>
-          <button class="circle-btn">→</button>
-        </div>
-      </div>
+<div class="card course" onclick="send('course')">
+<div class="card-content">
+<h3>Курс</h3>
+<p>Навчання бровам</p>
+</div>
+</div>
 
-    </div>
+<div class="card booking" onclick="send('my')">
+<div class="card-content">
+<h3>Мій запис</h3>
+<p>Перевірити запис</p>
+</div>
+</div>
 
-    <section class="services">
-      <h2>Популярні послуги</h2>
+</div>
 
-      <div class="service">
-        <div>
-          <div class="service-name">Корекція брів</div>
-          <div class="service-time">30–40 хв</div>
-        </div>
-        <div class="price">від 350 грн</div>
-      </div>
+</div>
 
-      <div class="service">
-        <div>
-          <div class="service-name">Фарбування брів</div>
-          <div class="service-time">40–50 хв</div>
-        </div>
-        <div class="price">від 450 грн</div>
-      </div>
+<script>
+const tg = window.Telegram.WebApp;
+tg.expand();
 
-      <div class="service">
-        <div>
-          <div class="service-name">Ламінування брів</div>
-          <div class="service-time">60 хв</div>
-        </div>
-        <div class="price">від 700 грн</div>
-      </div>
+function send(action){
+    tg.sendData(action);
+}
+</script>
 
-      <div class="service">
-        <div>
-          <div class="service-name">Ламінування вій</div>
-          <div class="service-time">60–75 хв</div>
-        </div>
-        <div class="price">від 800 грн</div>
-      </div>
-    </section>
-
-  </div>
-
-  <div class="bottom-nav">
-    <button class="nav-item active" onclick="sendAction('home')">
-      <span>🏠</span>Головна
-    </button>
-    <button class="nav-item" onclick="sendAction('booking')">
-      <span>📅</span>Запис
-    </button>
-    <button class="nav-item" onclick="sendAction('portfolio')">
-      <span>✨</span>Роботи
-    </button>
-    <button class="nav-item" onclick="sendAction('reviews')">
-      <span>💬</span>Відгуки
-    </button>
-    <button class="nav-item" onclick="sendAction('contacts')">
-      <span>👤</span>Контакт
-    </button>
-  </div>
-
-  <script>
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-
-    function sendAction(action) {
-      tg.sendData(JSON.stringify({
-        action: action
-      }));
-    }
-  </script>
 </body>
 </html>
